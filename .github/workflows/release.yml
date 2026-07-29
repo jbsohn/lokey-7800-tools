@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
+  release:
+    types: [published, created]
 
 jobs:
   build-release:
@@ -83,6 +86,7 @@ jobs:
       - name: Publish GitHub Release Artifacts
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}
             *.deb
