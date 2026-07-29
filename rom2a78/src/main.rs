@@ -93,25 +93,49 @@ struct GenerateArgs {
     #[arg(long)]
     ym2149: bool,
 
+    /// Disable YM2149 sound chip at $0800
+    #[arg(long)]
+    no_ym2149: bool,
+
     /// Enable POKEY sound chip at $4000
     #[arg(long, visible_alias = "pokey4000")]
     pokey_4000: bool,
+
+    /// Disable POKEY sound chip at $4000
+    #[arg(long, visible_alias = "no-pokey4000")]
+    no_pokey_4000: bool,
 
     /// Enable POKEY sound chip at $4500
     #[arg(long, visible_alias = "pokey4500")]
     pokey_4500: bool,
 
+    /// Disable POKEY sound chip at $4500
+    #[arg(long, visible_alias = "no-pokey4500")]
+    no_pokey_4500: bool,
+
     /// Enable High Score Cartridge (HSC) save device
     #[arg(long)]
     hsc: bool,
+
+    /// Disable High Score Cartridge (HSC) save device
+    #[arg(long)]
+    no_hsc: bool,
 
     /// Enable SaveKey / AtariVox EEPROM save device
     #[arg(long)]
     savekey: bool,
 
+    /// Disable SaveKey / AtariVox EEPROM save device
+    #[arg(long)]
+    no_savekey: bool,
+
     /// Enable XM Expansion Module passthrough
     #[arg(long)]
     xm: bool,
+
+    /// Disable XM Expansion Module passthrough
+    #[arg(long)]
+    no_xm: bool,
 
     /// TV type (ntsc, pal)
     #[arg(long, value_enum)]
@@ -206,22 +230,49 @@ fn run_generate(args: GenerateArgs) {
     if let Some(a) = args.audio {
         cfg.audio = a;
     }
-    if args.ym2149 || cfg.ym2149 {
+    if args.no_ym2149 {
+        cfg.audio &= !0x0800;
+        cfg.ym2149 = false;
+    } else if args.ym2149 || cfg.ym2149 {
         cfg.audio |= 0x0800;
     }
-    if args.pokey_4000 || cfg.pokey_4000 {
+
+    if args.no_pokey_4000 {
+        cfg.audio &= !0x0001;
+        cfg.pokey_4000 = false;
+    } else if args.pokey_4000 || cfg.pokey_4000 {
         cfg.audio |= 0x0001;
     }
-    if args.pokey_4500 || cfg.pokey_4500 {
+
+    if args.no_pokey_4500 {
+        cfg.audio &= !0x0002;
+        cfg.pokey_4500 = false;
+    } else if args.pokey_4500 || cfg.pokey_4500 {
         cfg.audio |= 0x0002;
     }
-    if args.hsc || cfg.hsc {
+
+    if args.no_hsc {
+        if cfg.save_device == SaveDevice::Hsc {
+            cfg.save_device = SaveDevice::None;
+        }
+        cfg.hsc = false;
+    } else if args.hsc || cfg.hsc {
         cfg.save_device = SaveDevice::Hsc;
     }
-    if args.savekey || cfg.savekey {
+
+    if args.no_savekey {
+        if cfg.save_device == SaveDevice::Savekey {
+            cfg.save_device = SaveDevice::None;
+        }
+        cfg.savekey = false;
+    } else if args.savekey || cfg.savekey {
         cfg.save_device = SaveDevice::Savekey;
     }
-    if args.xm || cfg.xm {
+
+    if args.no_xm {
+        cfg.slot_passthrough = SlotPassthrough::None;
+        cfg.xm = false;
+    } else if args.xm || cfg.xm {
         cfg.slot_passthrough = SlotPassthrough::Xm;
     }
     if let Some(ct) = args.cart_type {

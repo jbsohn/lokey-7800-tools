@@ -7,7 +7,7 @@ A suite of modern command-line utilities for Atari 7800 software and homebrew de
 ### `rom2a78`
 Atari 7800 `.a78` ROM header utility adhering to the [8BitDev.org A78 Header Specification](https://7800.8bitdev.org/index.php/A78_Header_Specification).
 
-> **Background:** `rom2a78` was originally created to handle header generation for the **lokey-2149** cart, but it fully supports every header item and field defined in the [8BitDev.org A78 Header Specification](https://7800.8bitdev.org/index.php/A78_Header_Specification).
+> **Background:** `rom2a78` was originally created to handle header generation for the **lokey-ym2149** cart, but it fully supports every header item and field defined in the [8BitDev.org A78 Header Specification](https://7800.8bitdev.org/index.php/A78_Header_Specification).
 
 * **Header Generation:** Combines raw ROM binaries with 128-byte `.a78` emulator headers (`rom2a78 generate -i game.bin -o game.a78 -c a78header.json`).
 * **Full Spec Support:** Complete v1, v3, and v4 header fields including YM2149 sound flags (`--ym2149`), POKEY sound flags, controllers, TV format, save devices, and passthrough slots.
@@ -22,4 +22,3 @@ Atari 7800 `.a78` ROM header utility adhering to the [8BitDev.org A78 Header Spe
 cargo build --workspace
 cargo test --workspace
 ```
-# lokey-7800-tools

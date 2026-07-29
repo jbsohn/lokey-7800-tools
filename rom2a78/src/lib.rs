@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-/// Originally created to handle headers for the lokey-2149 cart, but fully
+/// Originally created to handle headers for the lokey-ym2149 cart, but fully
 /// adheres to all header fields in the 8BitDev.org Atari 7800 Header Specification:
 /// https://7800.8bitdev.org/index.php/A78_Header_Specification
 
