@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+*.a78
+*.rom
+*.bin
+.DS_Store
+.idea/
