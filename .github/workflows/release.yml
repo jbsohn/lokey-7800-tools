@@ -86,6 +86,16 @@ jobs:
           cp target/${{ matrix.target }}/generate-rpm/*.rpm ./rom2a78-amd64.rpm
           cp dist/PKGBUILD ./PKGBUILD
 
+      - name: Build Arch Linux Package
+        if: matrix.build_packages
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace archlinux:latest bash -c "
+            pacman -Syu --noconfirm base-devel cargo &&
+            useradd -m builduser &&
+            chown -R builduser:builduser /workspace &&
+            sudo -u builduser makepkg -p dist/PKGBUILD -s --noconfirm
+          "
+
       - name: Publish GitHub Release Artifacts
         uses: softprops/action-gh-release@v2
         with:
@@ -94,6 +104,7 @@ jobs:
             ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}
             *.deb
             *.rpm
+            *.pkg.tar.zst
             PKGBUILD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
