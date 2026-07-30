@@ -2,10 +2,11 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
+use std::fmt::Write as _;
 
 /// Originally created to handle headers for the lokey-ym2149 cart, but fully
 /// adheres to all header fields in the 8BitDev.org Atari 7800 Header Specification:
-/// https://7800.8bitdev.org/index.php/A78_Header_Specification
+/// <https://7800.8bitdev.org/index.php/A78_Header_Specification/>
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -87,6 +88,7 @@ impl fmt::Display for SlotPassthrough {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct Config {
@@ -148,6 +150,13 @@ impl Default for Config {
     }
 }
 
+/// Builds a 128-byte `.a78` header from the given config and ROM size.
+///
+/// # Errors
+///
+/// This function is currently guaranteed to not return an error, but returns a `Result`
+/// for future compatibility or field validation.
+#[allow(clippy::cast_possible_truncation)]
 pub fn build_a78_header(cfg: &Config, rom_size: u32) -> Result<[u8; 128], String> {
     let mut header = [0u8; 128];
 
@@ -201,6 +210,7 @@ pub fn build_a78_header(cfg: &Config, rom_size: u32) -> Result<[u8; 128], String
     Ok(header)
 }
 
+/// # Errors
 pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
     if header.len() < 128 {
         return Err(format!(
@@ -251,7 +261,6 @@ pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
         TvType::Ntsc
     };
     let save = match header[58] {
-        0 => SaveDevice::None,
         1 => SaveDevice::Hsc,
         2 => SaveDevice::Savekey,
         _ => SaveDevice::None,
@@ -278,27 +287,27 @@ pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
     };
 
     let mut out = String::new();
-    out.push_str("====================================================\n");
-    out.push_str("       Atari 7800 .a78 Header Specification        \n");
-    out.push_str("====================================================\n");
-    out.push_str(&format!("Header Version : {version}\n"));
-    out.push_str(&format!("Title          : {title}\n"));
-    out.push_str(&format!("ROM Size       : {rom_size} bytes ({} KB)\n", rom_size / 1024));
-    out.push_str(&format!("Cart Type Word : 0x{cart_type:04X}\n"));
-    out.push_str(&format!("Controller 1   : {c1}\n"));
-    out.push_str(&format!("Controller 2   : {c2}\n"));
-    out.push_str(&format!("TV Format      : {tv}\n"));
-    out.push_str(&format!("Save Device    : {save}\n"));
-    out.push_str(&format!("Expansion Slot : {slot}\n"));
-    out.push_str(&format!("Mapper         : {mapper_name}\n"));
-    out.push_str(&format!("Mapper Opts    : 0x{mapper_opts:02X}\n"));
-    out.push_str(&format!("Audio Word     : 0x{audio:04X} (YM2149: {}, POKEY@4000: {}, POKEY@4500: {})\n",
+    let _ = writeln!(out, "====================================================");
+    let _ = writeln!(out, "       Atari 7800 .a78 Header Specification        ");
+    let _ = writeln!(out, "====================================================");
+    let _ = writeln!(out, "Header Version : {version}");
+    let _ = writeln!(out, "Title          : {title}");
+    let _ = writeln!(out, "ROM Size       : {rom_size} bytes ({} KB)", rom_size / 1024);
+    let _ = writeln!(out, "Cart Type Word : 0x{cart_type:04X}");
+    let _ = writeln!(out, "Controller 1   : {c1}");
+    let _ = writeln!(out, "Controller 2   : {c2}");
+    let _ = writeln!(out, "TV Format      : {tv}");
+    let _ = writeln!(out, "Save Device    : {save}");
+    let _ = writeln!(out, "Expansion Slot : {slot}");
+    let _ = writeln!(out, "Mapper         : {mapper_name}");
+    let _ = writeln!(out, "Mapper Opts    : 0x{mapper_opts:02X}");
+    let _ = writeln!(out, "Audio Word     : 0x{audio:04X} (YM2149: {}, POKEY@4000: {}, POKEY@4500: {})",
         (audio & 0x0800) != 0,
         (audio & 0x0001) != 0,
         (audio & 0x0002) != 0
-    ));
-    out.push_str(&format!("Interrupt Word : 0x{interrupt:04X}\n"));
-    out.push_str("====================================================\n");
+    );
+    let _ = writeln!(out, "Interrupt Word : 0x{interrupt:04X}");
+    let _ = writeln!(out, "====================================================");
 
     Ok(out)
 }
@@ -321,9 +330,9 @@ mod tests {
         for (size, expected) in [
             (32768u32, [0x00, 0x00, 0x80, 0x00]),
             (65536u32, [0x00, 0x01, 0x00, 0x00]),
-            (131072u32, [0x00, 0x02, 0x00, 0x00]),
-            (262144u32, [0x00, 0x04, 0x00, 0x00]),
-            (524288u32, [0x00, 0x08, 0x00, 0x00]),
+            (131_072_u32, [0x00, 0x02, 0x00, 0x00]),
+            (262_144_u32, [0x00, 0x04, 0x00, 0x00]),
+            (524_288_u32, [0x00, 0x08, 0x00, 0x00]),
         ] {
             let cfg = Config::default();
             let header = build_a78_header(&cfg, size).unwrap();
@@ -333,17 +342,25 @@ mod tests {
 
     #[test]
     fn test_title_formatting() {
-        let mut cfg = Config::default();
-        cfg.title = Some("SHORT".to_string());
+        let cfg = Config {
+            title: Some("SHORT".to_string()),
+            ..Config::default()
+        };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(&header[17..22], b"SHORT");
         assert_eq!(&header[22..49], &[0x20; 27]);
 
-        cfg.title = Some("A VERY LONG TITLE THAT EXCEEDS THIRTY-TWO CHARACTERS".to_string());
+        let cfg = Config {
+            title: Some("A VERY LONG TITLE THAT EXCEEDS THIRTY-TWO CHARACTERS".to_string()),
+            ..Config::default()
+        };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(&header[17..49], b"A VERY LONG TITLE THAT EXCEEDS T");
 
-        cfg.title = None;
+        let cfg = Config {
+            title: None,
+            ..Config::default()
+        };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(&header[17..28], b"YM2149 CART");
     }
@@ -369,9 +386,11 @@ mod tests {
             let deserialized: ControllerType = serde_json::from_str(&json).unwrap();
             assert_eq!(deserialized, ct);
 
-            let mut cfg = Config::default();
-            cfg.controller_1 = ct;
-            cfg.controller_2 = ct;
+            let cfg = Config {
+                controller_1: ct,
+                controller_2: ct,
+                ..Config::default()
+            };
             let header = build_a78_header(&cfg, 32768).unwrap();
             assert_eq!(header[55], expected_val);
             assert_eq!(header[56], expected_val);
@@ -392,8 +411,10 @@ mod tests {
             let deserialized: TvType = serde_json::from_str(&json).unwrap();
             assert_eq!(deserialized, tv);
 
-            let mut cfg = Config::default();
-            cfg.tv_type = tv;
+            let cfg = Config {
+                tv_type: tv,
+                ..Config::default()
+            };
             let header = build_a78_header(&cfg, 32768).unwrap();
             assert_eq!(header[57], expected_val);
         }
@@ -414,8 +435,10 @@ mod tests {
             let deserialized: SaveDevice = serde_json::from_str(&json).unwrap();
             assert_eq!(deserialized, sd);
 
-            let mut cfg = Config::default();
-            cfg.save_device = sd;
+            let cfg = Config {
+                save_device: sd,
+                ..Config::default()
+            };
             let header = build_a78_header(&cfg, 32768).unwrap();
             assert_eq!(header[58], expected_val);
         }
@@ -435,8 +458,10 @@ mod tests {
             let deserialized: SlotPassthrough = serde_json::from_str(&json).unwrap();
             assert_eq!(deserialized, sp);
 
-            let mut cfg = Config::default();
-            cfg.slot_passthrough = sp;
+            let cfg = Config {
+                slot_passthrough: sp,
+                ..Config::default()
+            };
             let header = build_a78_header(&cfg, 32768).unwrap();
             assert_eq!(header[63], expected_val);
         }
@@ -465,10 +490,12 @@ mod tests {
     #[test]
     fn test_all_mapper_ids_and_custom_options() {
         for mapper_id in [0u8, 1u8, 2u8, 3u8, 4u8, 5u8, 42u8, 128u8, 255u8] {
-            let mut cfg = Config::default();
-            cfg.mapper = mapper_id;
-            cfg.mapper_opts = 0x7E;
-            cfg.interrupt = 0xCAFE;
+            let cfg = Config {
+                mapper: mapper_id,
+                mapper_opts: 0x7E,
+                interrupt: 0xCAFE,
+                ..Config::default()
+            };
 
             let header = build_a78_header(&cfg, 32768).unwrap();
             assert_eq!(header[64], mapper_id);
@@ -519,17 +546,19 @@ mod tests {
 
     #[test]
     fn test_header_decode_and_inspect_formatting() {
-        let mut cfg = Config::default();
-        cfg.title = Some("DECODE TEST".to_string());
-        cfg.controller_1 = ControllerType::Driving;
-        cfg.controller_2 = ControllerType::StMouse;
-        cfg.tv_type = TvType::Pal;
-        cfg.save_device = SaveDevice::Hsc;
-        cfg.slot_passthrough = SlotPassthrough::Xm;
-        cfg.mapper = 1;
-        cfg.audio = 0x0800;
+        let cfg = Config {
+            title: Some("DECODE TEST".to_string()),
+            controller_1: ControllerType::Driving,
+            controller_2: ControllerType::StMouse,
+            tv_type: TvType::Pal,
+            save_device: SaveDevice::Hsc,
+            slot_passthrough: SlotPassthrough::Xm,
+            mapper: 1,
+            audio: 0x0800,
+            ..Config::default()
+        };
 
-        let header = build_a78_header(&cfg, 131072).unwrap();
+        let header = build_a78_header(&cfg, 131_072).unwrap();
         let decoded = decode_a78_header(&header).unwrap();
 
         assert!(decoded.contains("Header Version : 4"));

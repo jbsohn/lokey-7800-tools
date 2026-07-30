@@ -47,6 +47,7 @@ enum Commands {
     },
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Args, Debug, Default)]
 struct GenerateArgs {
     /// Raw ROM binary input (.bin or .rom)
@@ -121,11 +122,11 @@ struct GenerateArgs {
     #[arg(long)]
     no_hsc: bool,
 
-    /// Enable SaveKey / AtariVox EEPROM save device
+    /// Enable `SaveKey` / `AtariVox` EEPROM save device
     #[arg(long)]
     savekey: bool,
 
-    /// Disable SaveKey / AtariVox EEPROM save device
+    /// Disable `SaveKey` / `AtariVox` EEPROM save device
     #[arg(long)]
     no_savekey: bool,
 
@@ -194,6 +195,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_generate(args: GenerateArgs) {
     let mut cfg = if let Some(cfg_path) = &args.config {
         let json = fs::read_to_string(cfg_path).unwrap_or_else(|e| {
@@ -218,18 +220,10 @@ fn run_generate(args: GenerateArgs) {
             fatal("Missing output .a78 path. Pass --output <PATH> or set \"output\": \"path\" in JSON config.");
         });
 
-    if let Some(v) = args.spec_version {
-        cfg.version = v;
-    }
-    if let Some(t) = args.title {
-        cfg.title = Some(t);
-    }
-    if let Some(m) = args.mapper {
-        cfg.mapper = m;
-    }
-    if let Some(a) = args.audio {
-        cfg.audio = a;
-    }
+    cfg.version = args.spec_version.unwrap_or(cfg.version);
+    cfg.title = args.title.or(cfg.title);
+    cfg.mapper = args.mapper.unwrap_or(cfg.mapper);
+    cfg.audio = args.audio.unwrap_or(cfg.audio);
     if args.no_ym2149 {
         cfg.audio &= !0x0800;
         cfg.ym2149 = false;
@@ -275,30 +269,14 @@ fn run_generate(args: GenerateArgs) {
     } else if args.xm || cfg.xm {
         cfg.slot_passthrough = SlotPassthrough::Xm;
     }
-    if let Some(ct) = args.cart_type {
-        cfg.cart_type = ct;
-    }
-    if let Some(tv) = args.tv_type {
-        cfg.tv_type = tv;
-    }
-    if let Some(c1) = args.controller_1 {
-        cfg.controller_1 = c1;
-    }
-    if let Some(c2) = args.controller_2 {
-        cfg.controller_2 = c2;
-    }
-    if let Some(sd) = args.save_device {
-        cfg.save_device = sd;
-    }
-    if let Some(sp) = args.slot_passthrough {
-        cfg.slot_passthrough = sp;
-    }
-    if let Some(mo) = args.mapper_opts {
-        cfg.mapper_opts = mo;
-    }
-    if let Some(irq) = args.interrupt {
-        cfg.interrupt = irq;
-    }
+    cfg.cart_type = args.cart_type.unwrap_or(cfg.cart_type);
+    cfg.tv_type = args.tv_type.unwrap_or(cfg.tv_type);
+    cfg.controller_1 = args.controller_1.unwrap_or(cfg.controller_1);
+    cfg.controller_2 = args.controller_2.unwrap_or(cfg.controller_2);
+    cfg.save_device = args.save_device.unwrap_or(cfg.save_device);
+    cfg.slot_passthrough = args.slot_passthrough.unwrap_or(cfg.slot_passthrough);
+    cfg.mapper_opts = args.mapper_opts.unwrap_or(cfg.mapper_opts);
+    cfg.interrupt = args.interrupt.unwrap_or(cfg.interrupt);
 
     let raw = fs::read(&input_path)
         .unwrap_or_else(|e| fatal(&format!("Cannot read '{}': {e}", input_path.display())));
@@ -364,7 +342,8 @@ fn run_generate(args: GenerateArgs) {
         }
     };
 
-    let header = build_a78_header(&cfg, rom_data.len() as u32).unwrap_or_else(|e| fatal(&e));
+    let rom_data_len = u32::try_from(rom_data.len()).unwrap_or_else(|_| fatal("ROM data size is too large to fit in 32-bit integer"));
+    let header = build_a78_header(&cfg, rom_data_len).unwrap_or_else(|e| fatal(&e));
 
     let mut out: Vec<u8> = Vec::with_capacity(128 + rom_data.len());
     out.extend_from_slice(&header);
