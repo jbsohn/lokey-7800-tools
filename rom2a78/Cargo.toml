@@ -17,14 +17,14 @@ extended-description = "Atari 7800 .a78 ROM header generator, inspector, and str
 section = "utils"
 priority = "optional"
 assets = [
-    ["target/x86_64-unknown-linux-gnu/release/rom2a78", "usr/bin/rom2a78", "755"],
+    ["target/release/rom2a78", "usr/bin/rom2a78", "755"],
     ["README.md", "usr/share/doc/rom2a78/README.md", "644"],
     ["LICENSE", "usr/share/doc/rom2a78/LICENSE", "644"],
 ]
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "target/x86_64-unknown-linux-gnu/release/rom2a78", dest = "/usr/bin/rom2a78", mode = "0755" },
+    { source = "target/release/rom2a78", dest = "/usr/bin/rom2a78", mode = "0755" },
     { source = "README.md", dest = "/usr/share/doc/rom2a78/README.md", mode = "0644" },
     { source = "LICENSE", dest = "/usr/share/doc/rom2a78/LICENSE", mode = "0644" }
 ]
