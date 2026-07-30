@@ -21,22 +21,22 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact_name: rom2a78-linux-amd64
+            artifact_name: a78tool-linux-amd64
             archive_ext: tar.gz
             build_packages: true
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact_name: rom2a78-macos-arm64
+            artifact_name: a78tool-macos-arm64
             archive_ext: tar.gz
             build_packages: false
           - target: x86_64-apple-darwin
             os: macos-13
-            artifact_name: rom2a78-macos-amd64
+            artifact_name: a78tool-macos-amd64
             archive_ext: tar.gz
             build_packages: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            artifact_name: rom2a78-windows-amd64
+            artifact_name: a78tool-windows-amd64
             archive_ext: zip
             build_packages: false
 
@@ -60,7 +60,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           mkdir -p staging
-          cp target/${{ matrix.target }}/release/rom2a78 staging/
+          cp target/${{ matrix.target }}/release/a78tool staging/
           cp README.md staging/
           cp LICENSE staging/
           cd staging
@@ -71,7 +71,7 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Path staging
-          Copy-Item target\${{ matrix.target }}\release\rom2a78.exe staging\
+          Copy-Item target\${{ matrix.target }}\release\a78tool.exe staging\
           Copy-Item README.md staging\
           Copy-Item LICENSE staging\
           Compress-Archive -Path staging\* -DestinationPath ${{ matrix.artifact_name }}.zip
@@ -80,10 +80,10 @@ jobs:
         if: matrix.build_packages
         run: |
           cargo install cargo-deb cargo-generate-rpm
-          cargo deb --target ${{ matrix.target }} -p rom2a78
-          cargo generate-rpm --target ${{ matrix.target }} -p rom2a78
-          cp target/${{ matrix.target }}/debian/*.deb ./rom2a78_amd64.deb
-          cp target/${{ matrix.target }}/generate-rpm/*.rpm ./rom2a78-amd64.rpm
+          cargo deb --target ${{ matrix.target }} -p a78tool
+          cargo generate-rpm --target ${{ matrix.target }} -p a78tool
+          cp target/${{ matrix.target }}/debian/*.deb ./a78tool_amd64.deb
+          cp target/${{ matrix.target }}/generate-rpm/*.rpm ./a78tool-amd64.rpm
           cp dist/PKGBUILD ./PKGBUILD
 
       - name: Build Arch Linux Package
@@ -94,7 +94,7 @@ jobs:
             pacman -Syu --noconfirm base-devel cargo &&
             useradd -m builduser &&
             chown -R builduser:builduser /workspace &&
-            sudo -u builduser makepkg -p dist/PKGBUILD -s --noconfirm
+            sudo -u builduser makepkg -s --noconfirm
           "
 
       - name: Publish GitHub Release Artifacts

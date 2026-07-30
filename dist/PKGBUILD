@@ -1,5 +1,5 @@
 # Maintainer: John Sohn <john.sohn@gmail.com>
-pkgname=rom2a78
+pkgname=a78tool
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="Atari 7800 .a78 ROM header utility adhering to the 8BitDev specification"
@@ -14,7 +14,7 @@ build() {
 }
 
 package() {
-  install -Dm755 "target/release/rom2a78" "$pkgdir/usr/bin/rom2a78"
+  install -Dm755 "target/release/a78tool" "$pkgdir/usr/bin/a78tool"
   install -Dm644 "README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 "LICENSE" "$pkgdir/usr/share/doc/$pkgname/LICENSE"
 }

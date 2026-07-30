@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use rom2a78::{
+use a78tool::{
     build_a78_header, decode_a78_header, Config, ControllerType, SaveDevice, SlotPassthrough,
     TvType,
 };
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "rom2a78",
+    name = "a78tool",
     version,
     about = "Atari 7800 .a78 ROM header utility adhering to the 8BitDev specification",
     long_about = "Created to handle headers for the lokey-2149 cart and fully compatible with \

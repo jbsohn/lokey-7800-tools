@@ -1,5 +1,5 @@
 [package]
-name = "rom2a78"
+name = "a78tool"
 version.workspace = true
 edition.workspace = true
 description = "Atari 7800 .a78 ROM header utility adhering to the 8BitDev specification"
@@ -17,16 +17,16 @@ extended-description = "Atari 7800 .a78 ROM header generator, inspector, and str
 section = "utils"
 priority = "optional"
 assets = [
-    ["target/release/rom2a78", "usr/bin/rom2a78", "755"],
-    ["../README.md", "usr/share/doc/rom2a78/README.md", "644"],
-    ["../LICENSE", "usr/share/doc/rom2a78/LICENSE", "644"],
+    ["target/release/a78tool", "usr/bin/a78tool", "755"],
+    ["../README.md", "usr/share/doc/a78tool/README.md", "644"],
+    ["../LICENSE", "usr/share/doc/a78tool/LICENSE", "644"],
 ]
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "target/release/rom2a78", dest = "/usr/bin/rom2a78", mode = "0755" },
-    { source = "../README.md", dest = "/usr/share/doc/rom2a78/README.md", mode = "0644" },
-    { source = "../LICENSE", dest = "/usr/share/doc/rom2a78/LICENSE", mode = "0644" }
+    { source = "target/release/a78tool", dest = "/usr/bin/a78tool", mode = "0755" },
+    { source = "../README.md", dest = "/usr/share/doc/a78tool/README.md", mode = "0644" },
+    { source = "../LICENSE", dest = "/usr/share/doc/a78tool/LICENSE", mode = "0644" }
 ]
 
 [lints]

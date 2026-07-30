@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "rom2a78",
+    "a78tool",
 ]
 
 [workspace.package]
