@@ -90,6 +90,7 @@ jobs:
         if: matrix.build_packages
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace archlinux:latest bash -c "
+            pacman-key --init && pacman-key --populate archlinux &&
             pacman -Syu --noconfirm base-devel cargo &&
             useradd -m builduser &&
             chown -R builduser:builduser /workspace &&
