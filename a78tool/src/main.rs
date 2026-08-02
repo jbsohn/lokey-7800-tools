@@ -255,12 +255,12 @@ fn run_generate(args: GenerateArgs) {
     }
 
     if args.no_savekey {
-        if cfg.save_device == SaveDevice::Savekey {
+        if cfg.save_device == SaveDevice::SaveKey {
             cfg.save_device = SaveDevice::None;
         }
         cfg.savekey = false;
     } else if args.savekey || cfg.savekey {
-        cfg.save_device = SaveDevice::Savekey;
+        cfg.save_device = SaveDevice::SaveKey;
     }
 
     if args.no_xm {

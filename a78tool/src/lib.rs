@@ -29,9 +29,9 @@ impl fmt::Display for TvType {
 pub enum ControllerType {
     None = 0,
     Joystick = 1,
-    Lightgun = 2,
+    LightGun = 2,
     Paddle = 3,
-    Trakball = 4,
+    TrakBall = 4,
     Keypad = 5,
     Driving = 6,
     AmigaMouse = 7,
@@ -43,9 +43,9 @@ impl fmt::Display for ControllerType {
         match self {
             ControllerType::None => write!(f, "None (0)"),
             ControllerType::Joystick => write!(f, "Joystick (1)"),
-            ControllerType::Lightgun => write!(f, "Lightgun (2)"),
+            ControllerType::LightGun => write!(f, "Light Gun (2)"),
             ControllerType::Paddle => write!(f, "Paddle (3)"),
-            ControllerType::Trakball => write!(f, "Trakball (4)"),
+            ControllerType::TrakBall => write!(f, "Trak Ball (4)"),
             ControllerType::Keypad => write!(f, "Keypad (5)"),
             ControllerType::Driving => write!(f, "Driving Controller (6)"),
             ControllerType::AmigaMouse => write!(f, "Amiga Mouse (7)"),
@@ -59,7 +59,7 @@ impl fmt::Display for ControllerType {
 pub enum SaveDevice {
     None = 0,
     Hsc = 1,
-    Savekey = 2,
+    SaveKey = 2,
 }
 
 impl fmt::Display for SaveDevice {
@@ -67,7 +67,7 @@ impl fmt::Display for SaveDevice {
         match self {
             SaveDevice::None => write!(f, "None (0)"),
             SaveDevice::Hsc => write!(f, "High Score Cartridge (1)"),
-            SaveDevice::Savekey => write!(f, "SaveKey / AtariVox EEPROM (2)"),
+            SaveDevice::SaveKey => write!(f, "SaveKey / AtariVox EEPROM (2)"),
         }
     }
 }
@@ -234,9 +234,9 @@ pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
     let c1 = match header[55] {
         0 => ControllerType::None,
         1 => ControllerType::Joystick,
-        2 => ControllerType::Lightgun,
+        2 => ControllerType::LightGun,
         3 => ControllerType::Paddle,
-        4 => ControllerType::Trakball,
+        4 => ControllerType::TrakBall,
         5 => ControllerType::Keypad,
         6 => ControllerType::Driving,
         7 => ControllerType::AmigaMouse,
@@ -246,9 +246,9 @@ pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
     let c2 = match header[56] {
         0 => ControllerType::None,
         1 => ControllerType::Joystick,
-        2 => ControllerType::Lightgun,
+        2 => ControllerType::LightGun,
         3 => ControllerType::Paddle,
-        4 => ControllerType::Trakball,
+        4 => ControllerType::TrakBall,
         5 => ControllerType::Keypad,
         6 => ControllerType::Driving,
         7 => ControllerType::AmigaMouse,
@@ -262,7 +262,7 @@ pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
     };
     let save = match header[58] {
         1 => SaveDevice::Hsc,
-        2 => SaveDevice::Savekey,
+        2 => SaveDevice::SaveKey,
         _ => SaveDevice::None,
     };
     let slot = if header[63] == 1 {
@@ -370,9 +370,9 @@ mod tests {
         let cases = [
             (ControllerType::None, 0u8, "none"),
             (ControllerType::Joystick, 1u8, "joystick"),
-            (ControllerType::Lightgun, 2u8, "lightgun"),
+            (ControllerType::LightGun, 2u8, "lightgun"),
             (ControllerType::Paddle, 3u8, "paddle"),
-            (ControllerType::Trakball, 4u8, "trakball"),
+            (ControllerType::TrakBall, 4u8, "trakball"),
             (ControllerType::Keypad, 5u8, "keypad"),
             (ControllerType::Driving, 6u8, "driving"),
             (ControllerType::AmigaMouse, 7u8, "amiga-mouse"),
@@ -425,7 +425,7 @@ mod tests {
         let cases = [
             (SaveDevice::None, 0u8, "none"),
             (SaveDevice::Hsc, 1u8, "hsc"),
-            (SaveDevice::Savekey, 2u8, "savekey"),
+            (SaveDevice::SaveKey, 2u8, "savekey"),
         ];
 
         for (sd, expected_val, json_str) in cases {
@@ -539,10 +539,10 @@ mod tests {
         assert_eq!(cfg.title.as_deref(), Some("FULL OPTION TEST"));
         assert_eq!(cfg.version, 4);
         assert_eq!(cfg.cart_type, 12);
-        assert_eq!(cfg.controller_1, ControllerType::Lightgun);
+        assert_eq!(cfg.controller_1, ControllerType::LightGun);
         assert_eq!(cfg.controller_2, ControllerType::AmigaMouse);
         assert_eq!(cfg.tv_type, TvType::Pal);
-        assert_eq!(cfg.save_device, SaveDevice::Savekey);
+        assert_eq!(cfg.save_device, SaveDevice::SaveKey);
         assert_eq!(cfg.slot_passthrough, SlotPassthrough::Xm);
         assert_eq!(cfg.mapper, 42);
         assert_eq!(cfg.mapper_opts, 255);
