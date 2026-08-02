@@ -469,18 +469,26 @@ mod tests {
 
     #[test]
     fn test_audio_flags_and_v3_synthesis() {
-        let mut cfg = Config::default();
-        cfg.audio = 0x0800;
+        let cfg = Config {
+            audio: 0x0800,
+            ..Config::default()
+        };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(u16::from_be_bytes([header[66], header[67]]), 0x0800);
         assert_ne!(header[54] & 0x04, 0);
 
-        cfg.audio = 0x0001;
+        let cfg = Config {
+            audio: 0x0001,
+            ..Config::default()
+        };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(u16::from_be_bytes([header[66], header[67]]), 0x0001);
         assert_ne!(header[54] & 0x08, 0);
 
-        cfg.audio = 0x0803;
+        let cfg = Config {
+            audio: 0x0803,
+            ..Config::default()
+        };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(u16::from_be_bytes([header[66], header[67]]), 0x0803);
         assert_ne!(header[54] & 0x04, 0);
