@@ -11,22 +11,31 @@ serde.workspace = true
 serde_json.workspace = true
 
 [package.metadata.deb]
+name = "lokey-7800-tools"
 maintainer = "John Sohn <john.sohn@gmail.com>"
 copyright = "2026 John Sohn"
-extended-description = "Atari 7800 .a78 ROM header generator, inspector, and stripper."
+license = "MIT and LGPL-2.1-only"
+extended-description = "Modern Atari 7800 development suite: a78tool (ROM header utility) and a78sign (digital signature tool)."
 section = "utils"
 priority = "optional"
 assets = [
     ["target/release/a78tool", "usr/bin/a78tool", "755"],
-    ["../README.md", "usr/share/doc/a78tool/README.md", "644"],
-    ["../LICENSE", "usr/share/doc/a78tool/LICENSE", "644"],
+    ["target/release/a78sign", "usr/bin/a78sign", "755"],
+    ["../README.md", "usr/share/doc/lokey-7800-tools/README.md", "644"],
+    ["../LICENSE", "usr/share/doc/lokey-7800-tools/LICENSE", "644"],
+    ["../a78sign/LICENSE", "usr/share/doc/lokey-7800-tools/LICENSE-a78sign", "644"],
 ]
 
 [package.metadata.generate-rpm]
+name = "lokey-7800-tools"
+summary = "Modern command-line utilities for Atari 7800 software development"
+license = "MIT and LGPL-2.1-only"
 assets = [
     { source = "target/release/a78tool", dest = "/usr/bin/a78tool", mode = "0755" },
-    { source = "../README.md", dest = "/usr/share/doc/a78tool/README.md", mode = "0644" },
-    { source = "../LICENSE", dest = "/usr/share/doc/a78tool/LICENSE", mode = "0644" }
+    { source = "target/release/a78sign", dest = "/usr/bin/a78sign", mode = "0755" },
+    { source = "../README.md", dest = "/usr/share/doc/lokey-7800-tools/README.md", mode = "0644" },
+    { source = "../LICENSE", dest = "/usr/share/doc/lokey-7800-tools/LICENSE", mode = "0644" },
+    { source = "../a78sign/LICENSE", dest = "/usr/share/doc/lokey-7800-tools/LICENSE-a78sign", mode = "0644" }
 ]
 
 [lints]

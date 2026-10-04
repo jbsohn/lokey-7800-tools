@@ -1,0 +1,22 @@
+{
+  "input": "game.bin",
+  "output": "game.a78",
+  "title": "DEFAULT ATARI 7800 GAME",
+  "version": 4,
+  "cart_type": 0,
+  "controller_1": "joystick",
+  "controller_2": "joystick",
+  "tv_type": "ntsc",
+  "save_device": "none",
+  "slot_passthrough": "none",
+  "mapper": 0,
+  "mapper_opts": 0,
+  "audio": 2048,
+  "interrupt": 0,
+  "ym2149": true,
+  "pokey_4000": false,
+  "pokey_4500": false,
+  "hsc": false,
+  "savekey": false,
+  "xm": false
+}
