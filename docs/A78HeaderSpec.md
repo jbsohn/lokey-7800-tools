@@ -42,9 +42,9 @@ a78tool inspect build/game.a78
 a78tool strip -i build/game.a78 -o build/game.bin
 ```
 
-### Sign the Resulting Cartridge (`a78sign`)
+### Sign the Raw Cartridge ROM (`a78sign`)
 ```bash
-a78sign -w build/game.a78
+a78sign -w build/game.bin
 ```
 
 ---

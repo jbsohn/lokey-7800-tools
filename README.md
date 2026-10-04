@@ -32,3 +32,20 @@ Atari 7800 cartridge digital signature tool: a Rust port of `7800sign` (`sign780
 cargo build --workspace
 cargo test --workspace
 ```
+
+---
+
+## Acknowledgements & Credits
+
+- **Bruce Tomlin**: For creating `7800sign` (`sign7800.c`) in the [7800basic](https://github.com/7800-devtools/7800basic) project. His foundational work reverse engineering and implementing the Atari 7800 digital signature algorithm made modern homebrew signing accessible to the entire community.
+- **Curt Vendel (The Atari Historical Society)**: For salvaging and preserving the original Atari engineering disks containing the 7800 digital encryption private keys, and sharing them with the community at Classic Gaming Expo 2001.
+- **Mike Saarna (RevEng)**: For the indispensable [7800basic](https://github.com/7800-devtools/7800basic) compiler and development suite, and his tireless contributions to modern Atari 7800 homebrew creation.
+- **8BitDev.org**: For publishing and maintaining the authoritative [A78 Header Specification](https://7800.8bitdev.org/index.php/A78_Header_Specification) that defines modern emulator and flash cart interoperability.
+- **The Atari Community**: We are grateful to the dedicated homebrew developers, tool authors, and enthusiasts on AtariAge and beyond keeping the Atari 7800 platform vibrant.
+
+---
+
+## License
+
+- `a78tool` and documentation are licensed under the **MIT License** (see [LICENSE](LICENSE)).
+- `a78sign` is a derivative of Bruce Tomlin's LGPL-licensed `sign7800.c` and is licensed under the **GNU Lesser General Public License v2.1** (see [a78sign/LICENSE](a78sign/LICENSE)).
