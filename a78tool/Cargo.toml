@@ -13,9 +13,8 @@ serde_json.workspace = true
 [package.metadata.deb]
 name = "lokey-7800-tools"
 maintainer = "John Sohn <john.sohn@gmail.com>"
-copyright = "2026 John Sohn"
-license = "MIT and LGPL-2.1-only"
-extended-description = "Modern Atari 7800 development suite: a78tool (ROM header utility) and a78sign (digital signature tool)."
+copyright = "2026 John Sohn <john.sohn@gmail.com>"
+extended-description = "Modern Atari 7800 development suite: a78tool (ROM header utility, MIT) and a78sign (digital signature tool, LGPL-2.1-only)."
 section = "utils"
 priority = "optional"
 assets = [

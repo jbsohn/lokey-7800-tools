@@ -87,5 +87,16 @@ fn rejects_conflicting_and_bad_input() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("Can't open"));
 
+    // Headered .a78 file is rejected with actionable error message
+    let mut headered = vec![0x41; 128];
+    headered.extend_from_slice(&std::fs::read(&path).unwrap());
+    let headered_path =
+        std::env::temp_dir().join(format!("a78sign-test-{}-headered.a78", std::process::id()));
+    std::fs::write(&headered_path, &headered).unwrap();
+    let out = a78sign(&[], &headered_path);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("128-byte .a78 header"));
+
     let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&headered_path);
 }

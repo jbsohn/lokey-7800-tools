@@ -19,10 +19,10 @@ Atari 7800 `.a78` ROM header utility adhering to the [8BitDev.org A78 Header Spe
 ### `a78sign`
 Atari 7800 cartridge digital signature tool: a Rust port of `7800sign` (`sign7800.c`) by Bruce Tomlin, from the [7800basic](https://github.com/7800-devtools/7800basic) project. Produces byte-for-byte the same signatures as the original.
 
-* **Verify:** `a78sign -t game.a78` reports whether the signature is valid, empty (never signed), or invalid. Exits `0` only if the signature is valid.
-* **Sign:** `a78sign -w game.a78` generates the 120-byte signature and writes it back into the image at `$FF80`. Without `-w` the signature is printed and the file is left untouched. If the image is already valid, writing is skipped unless `-f` / `--force` is specified.
-* **Inputs:** a multiple of 4 KB, optionally with a 128-byte `.a78` header in front. Sign the ROM *after* it is final: the signature covers the code from the hash start page (high nibble of `$FFF9`) to `$FFFF`.
-* Works on raw `.bin` and `.a78` files alike, so it can follow `a78tool generate` in a build pipeline.
+* **Verify:** `a78sign -t game.bin` reports whether the signature is valid, empty (never signed), or invalid. Exits `0` only if the signature is valid.
+* **Sign:** `a78sign -w game.bin` generates the 120-byte signature and writes it back into the image at `$FF80`. Without `-w` the signature is printed and the file is left untouched. If the image is already valid, writing is skipped unless `-f` / `--force` is specified.
+* **Inputs:** Raw cartridge ROM binary whose size is a multiple of 4 KB. Sign the ROM *after* it is compiled: the signature covers the code from the hash start page (high nibble of `$FFF9`) to `$FFFF`.
+* **Clean Build Pipeline:** Compile assembly to `game.bin` → sign with `a78sign -w game.bin` → package for emulators/flash carts with `a78tool generate -i game.bin -o game.a78`.
 
 > **License:** `a78sign` is a derivative of Bruce Tomlin's LGPL-licensed `sign7800.c` and is licensed under the **LGPL 2.1** (see [`a78sign/LICENSE`](a78sign/LICENSE)). The rest of this repository, including `a78tool`, is MIT.
 

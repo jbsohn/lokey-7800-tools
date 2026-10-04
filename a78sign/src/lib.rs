@@ -42,10 +42,12 @@ const SIGNATURE_END_OFFSET: i64 = -128;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SignError {
-    /// The image size is not a multiple of 4 KB (plus an optional 128-byte header).
+    /// The image size is not a multiple of 4 KB.
     NotMultipleOf4K,
     /// The image is smaller than 4 KB.
     TooSmall,
+    /// The file contains a 128-byte `.a78` header; a78sign operates strictly on raw ROM binaries.
+    HeaderPresent,
     /// `$FFF8` does not have the required `$F1` bits set.
     InvalidFff8,
     /// The hash start page in `$FFF9` lies below the start of the image.
@@ -63,6 +65,10 @@ impl fmt::Display for SignError {
         match self {
             SignError::NotMultipleOf4K => write!(f, "Cartridge size not a multiple of 4K bytes!"),
             SignError::TooSmall => write!(f, "Cartridge data file must be at least 4K!"),
+            SignError::HeaderPresent => write!(
+                f,
+                "File contains a 128-byte .a78 header. a78sign operates strictly on raw ROM binaries. Sign raw ROMs before running 'a78tool generate', or strip with 'a78tool strip'."
+            ),
             SignError::InvalidFff8 => write!(f, "Invalid byte at $FFF8, should be $FF!"),
             SignError::HashAreaTooLarge => write!(
                 f,
@@ -326,17 +332,19 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    /// Map a cartridge image into memory. The image may carry a 128-byte
-    /// `.a78` header; only the last 48 KB of a larger image are kept.
+    /// Map a raw cartridge ROM image into memory. Only the last 48 KB of a larger image are kept.
     ///
     /// # Errors
     ///
-    /// Returns [`SignError::NotMultipleOf4K`] if the image size isn't a
-    /// multiple of 4 KB (plus an optional 128-byte header), or
+    /// Returns [`SignError::HeaderPresent`] if a 128-byte `.a78` header is detected,
+    /// [`SignError::NotMultipleOf4K`] if the image size isn't a multiple of 4 KB, or
     /// [`SignError::TooSmall`] if it is smaller than 4 KB.
     pub fn load(image: &[u8]) -> Result<Self, SignError> {
         let size = image.len();
-        if size & 0xFFF != 0 && size & 0xFFF != 128 {
+        if size & 0xFFF == 128 {
+            return Err(SignError::HeaderPresent);
+        }
+        if size & 0xFFF != 0 {
             return Err(SignError::NotMultipleOf4K);
         }
         if size < 0x1000 {
@@ -617,16 +625,17 @@ mod tests {
     }
 
     #[test]
-    fn test_a78_header_and_large_images_are_end_aligned() {
+    fn test_header_rejected_and_large_images_are_end_aligned() {
         let mut rom = test_rom(0x8000, 0x87);
         sign(&mut rom);
 
-        // A 128-byte .a78 header in front does not change the result.
+        // A 128-byte .a78 header in front is explicitly rejected.
         let mut with_header = vec![0x41; 128];
         with_header.extend_from_slice(&rom);
-        let cart = Cartridge::load(&with_header).unwrap();
-        assert_eq!(cart.loaded_len(), with_header.len());
-        assert_eq!(cart.status(), SignatureStatus::Valid);
+        assert_eq!(
+            Cartridge::load(&with_header).unwrap_err(),
+            SignError::HeaderPresent
+        );
 
         // Only the last 48 KB of a bigger image are used.
         let mut big = test_rom(0x2_0000, 0x87);
@@ -676,11 +685,16 @@ mod tests {
                 "size {size}"
             );
         }
-        // Size is fine modulo 4K (with a header), but smaller than 4 KB.
-        assert_eq!(Cartridge::load(&[0; 128]).unwrap_err(), SignError::TooSmall);
+        for size in [128, 0x1080, 0x8080] {
+            assert_eq!(
+                Cartridge::load(&vec![0; size]).unwrap_err(),
+                SignError::HeaderPresent,
+                "size {size}"
+            );
+        }
         assert_eq!(Cartridge::load(&[]).unwrap_err(), SignError::TooSmall);
 
-        for size in [0x1000, 0x1080, 0x8000, 0x8080] {
+        for size in [0x1000, 0x2000, 0x8000, 0x1_0000] {
             assert!(Cartridge::load(&vec![0; size]).is_ok(), "size {size}");
         }
     }

@@ -13,7 +13,7 @@ use std::process::ExitCode;
     long_about = "Generates and verifies the digital signature that the Atari 7800 BIOS checks \
                   on cartridges.\n\n\
                   A Rust port of 7800sign (sign7800.c) by Bruce Tomlin, from the 7800basic project.\n\n\
-                  The image must be a multiple of 4 KB (optionally preceded by a 128-byte .a78 header) \
+                  The image must be a raw ROM binary whose size is a multiple of 4 KB \
                   with $FF at $FFF8 and the hash start page in the high nibble of $FFF9. The 120-byte \
                   signature lives at $FF80 and is written over the existing bytes there."
 )]
@@ -30,7 +30,7 @@ struct Cli {
     #[arg(short = 'f', long = "force", requires = "write")]
     force: bool,
 
-    /// Cartridge image (.bin, .a78 ...)
+    /// Raw cartridge ROM binary (.bin, .rom)
     image: PathBuf,
 }
 
