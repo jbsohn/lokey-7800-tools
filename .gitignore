@@ -5,3 +5,8 @@
 *.bin
 .DS_Store
 .idea/
+
+# Build output directory
+build/
+*.o
+.agent_tmp/

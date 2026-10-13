@@ -1,0 +1,8 @@
+GIMP Palette
+Name: Spaceship 160A Palette
+Columns: 4
+# Atari 7800 160A Spaceship Palette
+  0   0   0 Deep Space Black
+  0 200 255 Electric Cyan Cockpit
+255 120   0 Fiery Amber Wingtips
+240 240 240 Pure Star White Armor

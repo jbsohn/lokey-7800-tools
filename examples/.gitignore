@@ -1,0 +1,21 @@
+# Build output directory
+build/
+*.o
+*.bin
+*.rom
+*.a78
+
+# Emulator runtime cache / state
+.test7800/
+
+# Generated graphics assembly & include files (produced by a78gfx from assets/)
+ship.s
+ship.inc
+ship_bank.s
+ship_bank.inc
+atari.s
+atari.inc
+atari_bank.s
+atari_bank.inc
+*_bank.s
+*_bank.inc

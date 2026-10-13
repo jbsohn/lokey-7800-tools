@@ -1,8 +1,8 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::path::PathBuf;
 use std::fmt::Write as _;
+use std::path::PathBuf;
 
 /// Originally created to handle headers for the lokey-ym2149 cart, but fully
 /// adheres to all header fields in the 8BitDev.org Atari 7800 Header Specification:
@@ -292,7 +292,11 @@ pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
     let _ = writeln!(out, "====================================================");
     let _ = writeln!(out, "Header Version : {version}");
     let _ = writeln!(out, "Title          : {title}");
-    let _ = writeln!(out, "ROM Size       : {rom_size} bytes ({} KB)", rom_size / 1024);
+    let _ = writeln!(
+        out,
+        "ROM Size       : {rom_size} bytes ({} KB)",
+        rom_size / 1024
+    );
     let _ = writeln!(out, "Cart Type Word : 0x{cart_type:04X}");
     let _ = writeln!(out, "Controller 1   : {c1}");
     let _ = writeln!(out, "Controller 2   : {c2}");
@@ -301,7 +305,9 @@ pub fn decode_a78_header(header: &[u8]) -> Result<String, String> {
     let _ = writeln!(out, "Expansion Slot : {slot}");
     let _ = writeln!(out, "Mapper         : {mapper_name}");
     let _ = writeln!(out, "Mapper Opts    : 0x{mapper_opts:02X}");
-    let _ = writeln!(out, "Audio Word     : 0x{audio:04X} (YM2149: {}, POKEY@4000: {}, POKEY@4500: {})",
+    let _ = writeln!(
+        out,
+        "Audio Word     : 0x{audio:04X} (YM2149: {}, POKEY@4000: {}, POKEY@4500: {})",
         (audio & 0x0800) != 0,
         (audio & 0x0001) != 0,
         (audio & 0x0002) != 0
@@ -370,9 +376,9 @@ mod tests {
         let cases = [
             (ControllerType::None, 0u8, "none"),
             (ControllerType::Joystick, 1u8, "joystick"),
-            (ControllerType::LightGun, 2u8, "lightgun"),
+            (ControllerType::LightGun, 2u8, "light-gun"),
             (ControllerType::Paddle, 3u8, "paddle"),
-            (ControllerType::TrakBall, 4u8, "trakball"),
+            (ControllerType::TrakBall, 4u8, "trak-ball"),
             (ControllerType::Keypad, 5u8, "keypad"),
             (ControllerType::Driving, 6u8, "driving"),
             (ControllerType::AmigaMouse, 7u8, "amiga-mouse"),
@@ -399,10 +405,7 @@ mod tests {
 
     #[test]
     fn test_all_tv_type_enum_variants() {
-        let cases = [
-            (TvType::Ntsc, 0u8, "ntsc"),
-            (TvType::Pal, 1u8, "pal"),
-        ];
+        let cases = [(TvType::Ntsc, 0u8, "ntsc"), (TvType::Pal, 1u8, "pal")];
 
         for (tv, expected_val, json_str) in cases {
             assert_eq!(tv as u8, expected_val);
@@ -520,7 +523,7 @@ mod tests {
             "title": "FULL OPTION TEST",
             "version": 4,
             "cart_type": 12,
-            "controller_1": "lightgun",
+            "controller_1": "light-gun",
             "controller_2": "amiga-mouse",
             "tv_type": "pal",
             "save_device": "savekey",
@@ -578,7 +581,9 @@ mod tests {
         assert!(decoded.contains("Save Device    : High Score Cartridge (1)"));
         assert!(decoded.contains("Expansion Slot : XM Expansion Module (1)"));
         assert!(decoded.contains("Mapper         : 1 (YM-IOA Banked 128K/256K)"));
-        assert!(decoded.contains("Audio Word     : 0x0800 (YM2149: true, POKEY@4000: false, POKEY@4500: false)"));
+        assert!(decoded.contains(
+            "Audio Word     : 0x0800 (YM2149: true, POKEY@4000: false, POKEY@4500: false)"
+        ));
     }
 
     #[test]

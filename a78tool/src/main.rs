@@ -1,8 +1,8 @@
-use clap::{Args, Parser, Subcommand};
 use a78tool::{
     build_a78_header, decode_a78_header, Config, ControllerType, SaveDevice, SlotPassthrough,
     TvType,
 };
+use clap::{Args, Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
 
@@ -342,7 +342,8 @@ fn run_generate(args: GenerateArgs) {
         }
     };
 
-    let rom_data_len = u32::try_from(rom_data.len()).unwrap_or_else(|_| fatal("ROM data size is too large to fit in 32-bit integer"));
+    let rom_data_len = u32::try_from(rom_data.len())
+        .unwrap_or_else(|_| fatal("ROM data size is too large to fit in 32-bit integer"));
     let header = build_a78_header(&cfg, rom_data_len).unwrap_or_else(|e| fatal(&e));
 
     let mut out: Vec<u8> = Vec::with_capacity(128 + rom_data.len());

@@ -1,0 +1,13 @@
+[package]
+name = "a78gfx"
+version.workspace = true
+edition.workspace = true
+description = "Atari 7800 MARIA graphics asset compiler and ca65 code generator"
+license = "MIT"
+
+[dependencies]
+clap.workspace = true
+png = "0.18"
+
+[lints]
+workspace = true

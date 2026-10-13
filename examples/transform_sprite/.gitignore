@@ -1,0 +1,13 @@
+# Build output directory
+build/
+*.o
+*.bin
+*.rom
+*.a78
+
+# Emulator runtime cache / state
+.test7800/
+
+# Generated graphics files (produced by a78gfx bake from assets/)
+ship_bank.s
+ship_bank.inc
