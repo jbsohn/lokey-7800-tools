@@ -1,13 +1,15 @@
 # Maintainer: John Sohn <john.sohn@gmail.com>
-pkgname=a78tool
+pkgname=lokey-7800-tools
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Atari 7800 .a78 ROM header utility adhering to the 8BitDev specification"
+pkgdesc="Modern command-line utilities for Atari 7800 software development (a78tool and a78sign)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/username/lokey-7800-tools"
-license=('MIT')
+url="https://github.com/jbsohn/lokey-7800-tools"
+license=('MIT' 'LGPL-2.1-only')
 depends=('gcc-libs')
 makedepends=('cargo')
+provides=('a78tool' 'a78sign')
+conflicts=('a78tool')
 
 build() {
   cargo build --release --locked --workspace
@@ -15,6 +17,8 @@ build() {
 
 package() {
   install -Dm755 "$srcdir/../target/release/a78tool" "$pkgdir/usr/bin/a78tool"
+  install -Dm755 "$srcdir/../target/release/a78sign" "$pkgdir/usr/bin/a78sign"
   install -Dm644 "$srcdir/../README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
-  install -Dm644 "$srcdir/../LICENSE" "$pkgdir/usr/share/doc/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/../a78sign/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-a78sign"
 }

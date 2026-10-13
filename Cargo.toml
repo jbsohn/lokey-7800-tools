@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "a78tool",
     "a78gfx",
+    "a78sign",
 ]
 
 [workspace.package]

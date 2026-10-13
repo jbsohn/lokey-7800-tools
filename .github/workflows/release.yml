@@ -21,22 +21,22 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact_name: a78tool-linux-amd64
+            artifact_name: lokey-7800-tools-linux-amd64
             archive_ext: tar.gz
             build_packages: true
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact_name: a78tool-macos-arm64
+            artifact_name: lokey-7800-tools-macos-arm64
             archive_ext: tar.gz
             build_packages: false
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact_name: a78tool-macos-amd64
+            artifact_name: lokey-7800-tools-macos-amd64
             archive_ext: tar.gz
             build_packages: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            artifact_name: a78tool-windows-amd64
+            artifact_name: lokey-7800-tools-windows-amd64
             archive_ext: zip
             build_packages: false
 
@@ -61,8 +61,10 @@ jobs:
         run: |
           mkdir -p staging
           cp target/${{ matrix.target }}/release/a78tool staging/
+          cp target/${{ matrix.target }}/release/a78sign staging/
           cp README.md staging/
           cp LICENSE staging/
+          cp a78sign/LICENSE staging/LICENSE-a78sign
           cd staging
           tar -czvf ../${{ matrix.artifact_name }}.tar.gz *
 
@@ -72,8 +74,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path staging
           Copy-Item target\${{ matrix.target }}\release\a78tool.exe staging\
+          Copy-Item target\${{ matrix.target }}\release\a78sign.exe staging\
           Copy-Item README.md staging\
           Copy-Item LICENSE staging\
+          Copy-Item a78sign\LICENSE staging\LICENSE-a78sign
           Compress-Archive -Path staging\* -DestinationPath ${{ matrix.artifact_name }}.zip
 
       - name: Build Linux .deb and .rpm Packages
@@ -82,8 +86,8 @@ jobs:
           cargo install cargo-deb cargo-generate-rpm
           cargo deb --target ${{ matrix.target }} -p a78tool
           cargo generate-rpm --target ${{ matrix.target }} -p a78tool
-          cp target/${{ matrix.target }}/debian/*.deb ./a78tool_amd64.deb
-          cp target/${{ matrix.target }}/generate-rpm/*.rpm ./a78tool-amd64.rpm
+          cp target/${{ matrix.target }}/debian/*.deb ./lokey-7800-tools_amd64.deb
+          cp target/${{ matrix.target }}/generate-rpm/*.rpm ./lokey-7800-tools-amd64.rpm
           cp dist/PKGBUILD ./PKGBUILD
 
       - name: Build Arch Linux Package

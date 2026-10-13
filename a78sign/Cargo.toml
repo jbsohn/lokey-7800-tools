@@ -1,0 +1,13 @@
+[package]
+name = "a78sign"
+version.workspace = true
+edition.workspace = true
+description = "Atari 7800 cartridge digital signature tool (Rust port of Bruce Tomlin's 7800sign)"
+license = "LGPL-2.1-only"
+
+[dependencies]
+clap.workspace = true
+num-bigint = "0.5"
+
+[lints]
+workspace = true
