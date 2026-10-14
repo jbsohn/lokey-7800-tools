@@ -24,7 +24,7 @@ The graphics engine is built on a clear architectural blueprint: **trade inexpen
 
 | Architectural Dimension | Traditional 7800 Approach | `libmaria` + `a78gfx` Pipeline |
 | :--- | :--- | :--- |
-| **Heavy Math & Pre-Processing** | Runtime 6502 math or hand-drawn frames | Offline host compilation (`a78gfx` RotSprite rotations, scaling, flips, and layer flattening) |
+| **Heavy Math & Pre-Processing** | Runtime 6502 math or hand-drawn frames | Offline host compilation (`a78gfx` discrete angle rotations with PAR, scaling, flips; RotSprite & layer flattening planned) |
 | **ROM Storage** | Uncompressed monolithic tiles | Pre-baked page-strided graphics & DL templates in banked ROM |
 | **RAM Footprint** | Ad-hoc buffers scattered across RAM | Standardized $< 1\text{ KB}$ footprint for Display Lists and active game entities |
 | **Runtime 6502 CPU Work** | Complex zone clipping and manual table math | Fast blast-copies of 4-byte pre-baked headers into RAM Display Lists ($\approx 80\text{ cycles/sprite}$) |
@@ -67,10 +67,10 @@ DPPH / DPPL ($2C / $30)
 └─────────────────────────┘
 ```
 
-#### A. Display List List Entry (`MariaDLLEntry` - 3 bytes)
+#### A. Display List List Entry (`TMariaDLLEntry` - 3 bytes)
 
 ```ca65
-.struct MariaDLLEntry
+.struct TMariaDLLEntry
     offset      .byte   ; Bits 3..0: Height-1 (0..15 => 1..16 lines)
                         ; Bit 5: H8  (Holey DMA 8)
                         ; Bit 6: H16 (Holey DMA 16)
@@ -80,10 +80,10 @@ DPPH / DPPL ($2C / $30)
 .endstruct
 ```
 
-#### B. Direct Display List Header (`MariaDLHeader` - 4 bytes)
+#### B. Direct Display List Header (`TMariaDLHeaderDirect` - 4 bytes)
 
 ```ca65
-.struct MariaDLHeader
+.struct TMariaDLHeaderDirect
     addr_lo     .byte   ; Low byte of graphic data address
     pal_w       .byte   ; Bits 7..5: Palette (0..7), Bits 4..0: -Width ($1F = 1 byte)
     addr_hi     .byte   ; High byte of graphic data address
@@ -91,9 +91,26 @@ DPPH / DPPL ($2C / $30)
 .endstruct
 ```
 
-#### C. Display List Terminator (`MariaDLTerminator` - 2 bytes)
+#### C. Extended Display List Header (`TMariaDLHeaderExtended` - 5 bytes)
 
-Indicated by `$00, $00` (second byte has bits 0..4, 6 clear).
+```ca65
+.struct TMariaDLHeaderExtended
+    addr_lo     .byte   ; Low byte of graphic data address
+    flags       .byte   ; Bit 7: Kangaroo, Bit 6: WriteMode, Bits 5..0: Indirect offset
+    addr_hi     .byte   ; High byte of graphic data address
+    pal_w       .byte   ; Bits 7..5: Palette (0..7), Bits 4..0: -Width
+    hpos        .byte   ; Horizontal pixel position (0..159)
+.endstruct
+```
+
+#### D. Display List Terminator (`TMariaDLTerminator` - 2 bytes)
+
+```ca65
+.struct TMariaDLTerminator
+    term0       .byte   ; $00
+    term1       .byte   ; $00 (second byte has bits 0..4, 6 clear)
+.endstruct
+```
 
 ---
 
@@ -379,15 +396,18 @@ Instead of partitioning RAM into 15 rigid chunks, all zone lists share a single 
 
 ## 5. Total Frame & Memory Budgets
 
-### 5.1 RAM Budget (Total: < 1 KB out of 4 KB available)
+### 5.1 RAM Budget (Total: ~1.5 KB out of 4 KB available)
 
 ```text
 Address Range       Size      Allocation
 -------------       ----      ----------
 $1800 - $18EF       240 B     Active Dynamic Objects Table (48 objects * 5 bytes)
 $18F0 - $18FF        16 B     Engine State, Zone Indices, ZP shadow vars
-$1900 - $1B7F       640 B     Display List Pools (Buffer A & Buffer B double buffer)
-$1B80 - $27FF     3,200 B     100% FREE FOR GAME LOGIC, RAM TILES & SCORES!
+$1900 - $1AFF       512 B     Display List Dynamic Pool Buffer A
+$1B00 - $1CFF       512 B     Display List Dynamic Pool Buffer B
+$1D00 - $1D7F        50 B     Display List List (DLL) Buffer A (16 zones)
+$1D80 - $1DFF        50 B     Display List List (DLL) Buffer B (16 zones)
+$1E00 - $27FF     2,560 B     100% FREE FOR GAME LOGIC, AUDIO, RAM TILES & SCORES!
 ```
 
 ### 5.2 CPU Frame Budget (Robotron Scenario: 50 Moving Sprites)
@@ -423,11 +443,11 @@ While 1980s commercial cartridges were strictly constrained by chip costs to 32 
    - Decoupled from format specifics via an extensible `GraphicDecoder` trait and `GfxFile` container.
    - Automatically detects format via file extension or magic bytes (PNG, BMP, GIF, Atari ST Degas `.pi1`/`.pc1`, Amiga IFF/ILBM, and raw binary).
    - Converts any supported source format into our internal format-agnostic `IndexedGraphic` raster before running transformations.
-2. **Compile-Time Image Combination & Layer Flattening (`--combine <files...>` / `--flatten`)**:
+2. **Compile-Time Image Combination & Layer Flattening (`--combine <files...>` / `--flatten`) [Planned Task]**:
    - Allows artists to draw modular art across multiple source PNG files (e.g. `hull.png`, `cockpit.png`, `weapons.png`).
    - `a78gfx` composites and flattens them into a **single unified sprite** at build time before generating rotations and scale steps.
    - **Massive DMA Savings**: MARIA fetches **1 single header and 1 stream of pixels** instead of 3 separate headers, cutting scanline DMA consumption by 50–70% and preventing scanline overruns.
-3. **Automated Multi-Layer Palette Splitting**: When an image exceeds single-palette color limits (e.g. 6 colors in 160A or 3+ colors in 320A), `a78gfx` automatically separates the image into synchronized layer bitplanes, rotating and scaling each layer in lockstep and generating the composite ROM archetype.
+3. **Automated Multi-Layer Palette Splitting [Planned Task]**: When an image exceeds single-palette color limits (e.g. 6 colors in 160A or 3+ colors in 320A), `a78gfx` will automatically separate the image into synchronized layer bitplanes, rotating and scaling each layer in lockstep and generating the composite ROM archetype.
 4. **256-Byte Page Transposition**: Automatically arranges 16-line graphics across consecutive 256-byte pages in memory so MARIA's `addr + offset` DMA addressing hits the correct scanlines.
 5. **Abstract Assembler Target Support (`ca65`, `dasm`, `mads`) & Binary-First Architecture**:
    - Strictly enforces a **binary-first output model**: emits raw `.bin` graphic binary slices alongside companion `.inc` metadata headers.
@@ -452,8 +472,7 @@ While 1980s commercial cartridges were strictly constrained by chip costs to 32 
      - `--angles 16` (or `--step-degrees 22.5`): Silky-smooth *Asteroids* / *Robotron* / overhead racer steering.
      - `--angles 32` (or `--step-degrees 11.25`): Analog paddle / flight combat resolution.
    - **Single Source Canonical Image**: The artist draws only **one single canonical PNG** (e.g. facing North / $0^\circ$).
-   - **RotSprite / Palette-Preserving Rotation**: Rotates pixels algorithmically without blurring or introducing out-of-palette colors.
-   - **Pixel Aspect Ratio (PAR) Correction**: Automatically compensates for 160A mode's 2:1 non-square rectangular pixels so rotated shapes stay geometrically true on real CRT displays.
+   - **Inverse-Trigonometric Sampling & PAR Correction**: Implements inverse-mapping rotation with Pixel Aspect Ratio (PAR) correction, automatically compensating for 160A mode's 2:1 non-square rectangular pixels so rotated shapes stay geometrically true on real CRT displays. *(Note: True Scale2x/EPX RotSprite contour preservation is tracked as a roadmap task).*
    - **Automatic ca65 Angle Lookup Tables**: Generates ready-to-use lookup tables:
 
      ```ca65
@@ -461,7 +480,7 @@ While 1980s commercial cartridges were strictly constrained by chip costs to 32 
      ship_angles_hi: .byte >ship_rot_0, >ship_rot_1, >ship_rot_2 ...
      ```
 
-7. **Pre-Baked Sprite Scaling (`--scales <N>`)**:
+8. **Pre-Baked Sprite Scaling (`--scales <N>`)**:
    - Generates $N$ pre-scaled sprite variations (e.g., $100\%, 80\%, 60\%, 40\%, 20\%$) from a single source image for pseudo-3D road, flight, and scaling arcade games (*OutRun*, *Space Harrier*, *After Burner* style).
    - Generates matching scale pointer tables and pre-computed header widths.
 9. **Hardware Flip Emulation (`--flip-x`, `--flip-y`)**:
@@ -556,84 +575,166 @@ When `DrawObject` runs:
 
 ## 9. Master Implementation Checklist & Milestones
 
-### Phase 0: Foundations & Minimal POC (Current Status)
+### Phase 0: Foundations & Minimal POC (`examples/pixel`)
 
 - [x] Document MARIA hardware mechanics, DMA limits, and `libmaria` architecture.
-- [x] Configure workspace `../Cargo.toml` for `a78tool` and `a78gfx`.
-- [x] Implement minimal ca65 proof-of-concept (`../examples/pixel`):
+- [x] Configure workspace `Cargo.toml` for `a78tool` and `a78gfx`.
+- [x] Implement minimal ca65 proof-of-concept (`examples/pixel`):
   - [x] Direct DL / DLL structures (`include/maria.inc`).
-  - [x] Single 1-scanline zone render (center green dot).
+  - [x] Single 1-scanline zone render (center green dot at scanline 120, HPOS 79).
   - [x] Linker config (`7800.cfg`), signature, and `.a78` ROM generation via `a78tool`.
+
+---
+
+### Phase 0.5: Repository Architecture, Tooling, & Code Hygiene
+
+- [ ] **Task 0.5.1: Centralize `maria.inc` into shared root directory**:
+  - *Context*: `maria.inc` is currently triplicated byte-for-byte across `examples/pixel/include/maria.inc`, `examples/static_sprite/include/maria.inc`, and `examples/transform_sprite/include/maria.inc`.
+  - *Action*: Create `include/maria.inc` at the repository root; update example Makefiles (`-I ../../include`) to include the shared header; remove duplicate subdirectories.
+- [x] **Task 0.5.2: Remove obsolete duplicate documentation**:
+  - *Context*: `examples/pixel/MARIA_ARCHITECTURE.md` was an outdated, truncated duplicate of `MariaArchitecture.md`.
+  - *Action*: Verified all content was represented in `docs/` and deleted the duplicate to prevent doc drift.
+- [ ] **Task 0.5.3: Harmonize struct definitions and add high-level object models to `maria.inc`**:
+  - *Context*: Document specifies `TMariaDLLEntry`, `TMariaDLHeaderDirect`, `TMariaDLHeaderExtended`, `TMariaDLTerminator`.
+  - *Action*: Add alias equates if needed, and define high-level `GameObject` and `SpriteObject` structs in `maria.inc` so game and engine code have standard structures.
+- [ ] **Task 0.5.4: Standardize visible scanline count conventions**:
+  - *Context*: `examples/pixel/main.s` partitions 242 lines across 17 zone entries, while `static_sprite` and `transform_sprite` partition 240 lines across 15 zones (16 lines each).
+  - *Action*: Standardize on canonical 240-line (15-zone $\times$ 16 lines) or 242-line NTSC display lists across all sample code, documenting the trade-off.
+
+---
 
 ### Phase 1: `a78gfx` Asset Pipeline (Rust CLI)
 
-- [x] Implement `a78gfx` crate in workspace:
-  - [x] Support Indexed PNG parsing (160A 4-color palettes, 320 modes).
-  - [x] 256-byte page-strided scanline transposition for MARIA hardware DMA (`addr + offset`).
-  - [x] Compile-time discrete rotation generator (`--angles <N>`, pixel aspect ratio correction).
-  - [x] Compile-time discrete scaling generator (`--scales <N>`, `scale_centered`).
-  - [x] Compile-time horizontal/vertical flipping (`--flip-x`, `--flip-y`).
-  - [x] Exporters: raw binary `.bin` slices and companion `.inc` metadata headers.
-  - [x] Strictly binary-first pipeline: eliminated assembly `.byte` dumps in favor of direct `.bin` and companion `.inc` attributes.
-  - [x] Abstract assembler target backend (`AssemblerWriter` trait supporting `ca65`, `dasm`, and `mads`).
-  - [x] Format-agnostic image input abstraction (`GfxFile` / `GraphicDecoder` / `GfxFormat`).
-  - [x] Abstract palette import system (`PaletteFile` / `PaletteDecoder` / `PaletteFormat`).
-  - [x] GIMP Palette (`.gpl`) format decoder for Aseprite, GIMP, and LibreSprite workflows.
-  - [x] Perceptual redmean color quantization and nearest color matching.
-  - [x] Hardware color table and register equates generation (`MariaColor`, `ATARI_7800_NTSC_PALETTE`).
-  - [x] Subpalette slot selection (`--subpalette <0..7>`) and DL header `pal_w` bit embedding.
-- [ ] Compile-time image combining & layer flattening (`--combine <files...>` / `--flatten`):
-  - Flatten modular PNG layers into single unified sprites to minimize MARIA scanline DMA overhead.
-- [ ] Automated multi-layer 320-mode palette decomposition:
-  - Split multi-color 320 PNGs into synchronized bitplanes and emit `CompositeArchetype` descriptors in ROM.
+#### Completed Features:
+- [x] Indexed PNG parsing (160A 4-color palettes, 320 modes).
+- [x] 256-byte page-strided scanline transposition for MARIA hardware DMA (`addr + offset`).
+- [x] Discrete inverse-trigonometric rotation generator (`--angles <N>`, 2:1 pixel aspect ratio correction).
+- [x] Pre-baked discrete scaling generator (`--scales <N>`, `scale_centered`).
+- [x] Horizontal and vertical sprite flipping (`--flip-x`, `--flip-y`).
+- [x] Binary-first output pipeline: emits `.bin` slices alongside companion `.inc` metadata headers.
+- [x] Abstract assembler target backend (`AssemblerWriter` trait supporting `ca65`, `dasm`, and `mads`).
+- [x] Format-agnostic image input abstraction (`GfxFile` / `GraphicDecoder` / `GfxFormat`).
+- [x] Abstract palette import system (`PaletteFile` / `PaletteDecoder` / `PaletteFormat`).
+- [x] GIMP Palette (`.gpl`) format decoder for Aseprite, GIMP, and LibreSprite workflows.
+- [x] Perceptual redmean color quantization and nearest color matching.
+- [x] Hardware color table and register equates generation (`MariaColor`, `ATARI_7800_NTSC_PALETTE`).
+- [x] Subpalette slot selection (`--subpalette <0..7>`) and DL header `pal_w` bit embedding.
 
-### Phase 2: Single-Sprite Transformation Demo (`../examples/transform_sprite`)
+#### Pending Tasks:
+- [ ] **Task 1.1: Multi-Page Set Banking in `MariaSpriteBank` ($N \times 256$-byte pages)**:
+  - *Context*: In `MariaSpriteBank::add_frame`, total frame width across all banked frames is capped at 256 bytes (`next_end > 256`). For a 16x16 sprite (4 bytes/line in 160A), this limits the bank to 64 frames. Combining 16 rotations $\times$ 5 scales (80 frames = 320 bytes) or larger sprites causes a fatal conversion error.
+  - *Action*: Extend `MariaSpriteBank` to allocate multiple 256-byte page blocks (`page_sets: Vec<Vec<Vec<u8>>>`), track which page-set base address (`addr_hi`) each frame belongs to, and emit corresponding `_bank_pages_0`, `_bank_pages_1` symbols and table arrays (`bank_frame_hi: .byte >page_0, >page_1...`).
+- [ ] **Task 1.2: 2D Transformation Lookup Matrix Generation ($Angle \times Scale$)**:
+  - *Context*: When both `--angles` and `--scales` are passed to `a78gfx bake`, scale frames are currently concatenated flat at the end of `bank.frames`.
+  - *Action*: Generate a two-dimensional matrix of frames ($N_{angles} \times M_{scales}$), emitting structured 2D ca65 lookup tables indexed by `(angle * num_scales) + scale_idx` or parallel 2D pointer arrays.
+- [ ] **Task 1.3: Compile-Time Image Combining & Layer Flattening (`--combine <files...>` / `--flatten`)**:
+  - *Context*: Artists drawing multi-layer modular sprites (hull, cockpit, weapons) currently produce multiple headers that multiply scanline DMA overhead.
+  - *Action*: Implement composite layering in `a78gfx` that blends multiple PNGs into a single unified `IndexedGraphic` raster prior to rotation/scale baking, eliminating extra headers.
+- [ ] **Task 1.4: Automated Multi-Layer 320-Mode Palette Decomposition**:
+  - *Context*: Single 320A objects are 1-bit (transparent + 1 foreground color). Rich multi-color 320 sprites require multiple overlaid headers.
+  - *Action*: Automatically decompose RGBA source artwork into synchronized layer bitplanes (Layer 0, Layer 1, Layer 2), baking them into multi-layer ROM archetypes.
+- [ ] **Task 1.5: True RotSprite Algorithm Implementation**:
+  - *Context*: Current rotation uses nearest-neighbor sampling with PAR correction. True RotSprite applies Scale2x / EPX pattern matching to preserve sharp pixel art contours and prevent stepping artifacts at non-orthogonal angles.
+  - *Action*: Implement an optional `--rotsprite` algorithm flag in `IndexedGraphic::rotate`.
+
+---
+
+### Phase 1.5: Static Multi-Line Sprite Demo (`examples/static_sprite`)
+
+- [x] Single 16x16 4-color spaceship centered in Zone 7 (`assets/ship.png`, `ship.gpl`).
+- [x] 256-byte page-strided scanline alignment (`ship_pages`).
+- [x] 100% ROM-resident Display List (`dl_ship` with direct header + terminator) costing 0 bytes RAM.
+- [x] Build automated via Makefile, signed via `7800sign`, packaged via `a78tool`.
+
+---
+
+### Phase 2: Single-Sprite Transformation Demo (`examples/transform_sprite`)
 
 *Objective: Load a PNG, center it on screen, and continuously cycle through discrete pre-baked rotations and scale steps in a loop without full game logic.*
 
-- [x] Source asset: Canonical graphic (`assets/ship.png` - 16x16 4-color indexed sprite).
-- [x] Process asset through `a78gfx bake` with 16 discrete rotations and 4 scale steps.
-- [x] 6502 demo harness:
-  - [x] Double-buffered DL zone allocation in RAM for a multi-scanline sprite (`dl_buffer_0` / `dl_buffer_1`).
-  - [x] Frame loop: Update angle and scale indices each frame/tick.
-  - [x] Dynamic update of DL headers pointing to pre-baked ROM tables.
-  - [x] Build automated via Makefile and ready for verification in `test7800` and `a7800`.
+#### Completed Work:
+- [x] Canonical source asset (`assets/ship.png` - 16x16 4-color indexed sprite).
+- [x] Process asset through `a78gfx bake` with 16 discrete rotations and 2:1 PAR compensation (`ship_bank.bin`, `ship_bank.inc`).
+- [x] Dynamic RAM Display List at `$1800` updated during VBLANK (16 CPU cycles per update).
+- [x] 60 Hz frame synchronization via `MSTAT` VBLANK polling.
+- [x] Build automated via Makefile and verified in `test7800` and `a7800`.
+
+#### Pending Tasks:
+- [ ] **Task 2.1: True Double-Buffered DL Zone Allocation (`dl_buffer_0` / `dl_buffer_1`)**:
+  - *Context*: Currently uses a single 6-byte buffer `dl_ship` at `$1800` updated directly during VBLANK.
+  - *Action*: Allocate two separate RAM buffers (`dl_buffer_0` at `$1900`, `dl_buffer_1` at `$1A00`); swap the zone's DL pointer or DLL base during VBLANK; construct the next frame in the inactive buffer.
+- [ ] **Task 2.2: Discrete Scale Steps Frame Loop Integration**:
+  - *Context*: Makefile bakes only 16 rotations (`--angles 16`). Scale steps are not baked or animated.
+  - *Action*: Bake scale variations using `a78gfx bake` (e.g. `--scales 0.5,0.75,1.0,1.25` or combined matrix); add `scale_index` and `scale_timer` in 6502 Zero Page; animate ship pulsing / scaling while rotating.
+- [ ] **Task 2.3: Assembly Code Quality & Struct Offset Cleanup**:
+  - *Context*: [examples/transform_sprite/main.s](file:///home/john/Projects/lokey-7800-tools/examples/transform_sprite/main.s#L86-L88) hardcodes magic offsets `dl_ship + 4` and `dl_ship + 5` for terminator bytes.
+  - *Action*: Replace hardcoded byte offsets with `.sizeof(TMariaDLHeaderDirect)` and `TMariaDLTerminator::term0/term1` symbolic struct members.
+
+---
 
 ### Phase 3: Classic "Atari ST Dev Kit Bug" Demo (`examples/bug_ram`)
 
 *Objective: Recreate the iconic bouncing bug sample from the Atari ST development kit, demonstrating dynamic positioning / frame buffer / multi-zone rendering on MARIA.*
 
-- [ ] Asset preparation: Classic Atari ST beetle/bug artwork formatted for 160A/320 modes.
-- [ ] Bouncing physics and coordinate animation loop on 6502.
-- [ ] Multi-zone Display List generation and smooth zone traversal across screen boundaries.
-- [ ] Build and verify in `test7800` and `a7800`.
+- [x] **Task 3.1: Asset Preparation**:
+  - Convert classic Atari ST beetle/bug artwork for 160A 4-color mode and 320A high-res overlay mode using `a78gfx`.
+  - *Status*: 160A done (indexed PNGs decoded from `bugs-st/IMAGES.S`). 320A overlay not done.
+- [x] **Task 3.2: 6502 Bouncing Physics & Coordinate Simulation**:
+  - Implement 8.8 fixed-point $(X, Y)$ position and $(V_x, V_y)$ velocity logic.
+  - Implement screen edge collision detection and bounce deflection ($160 \times 240$ boundaries).
+  - *Status*: Ported from `upd_gravity` using a 160×200 field to match the ST screen.
+- [x] **Task 3.3: Multi-Zone Display List Generation & Dynamic Traversal**:
+  - Dynamically compute which 16-scanline zone(s) the bug occupies based on `y_pos`.
+  - Handle smooth vertical traversal across zone boundaries.
+- [ ] **Task 3.4: Build, Sign, and Emulator Verification**:
+  - Package with `a78tool` and verify tear-free animation in `test7800` and `a7800`.
+  - *Status*: Builds and signs. Emulator verification pending.
+
+---
 
 ### Phase 4: Core `libmaria` 6502 Engine Modularization
 
-- [ ] Strict Static (ROM) vs. Dynamic (RAM) separation:
-  - Wire static HUD and borders directly from ROM via DLL zone pointers (0 bytes RAM).
-- [ ] Structure of Arrays (SoA) object management with direct ROM pointers:
-  - `obj_x`, `obj_y`, `obj_rom_ptr_lo`, `obj_rom_ptr_hi`, `obj_flags` (240 bytes RAM for 48 objects).
-- [ ] Fast ROM-to-RAM blast copy loop for DL header emission (dereference `rom_ptr`, write `hpos = x`).
-- [ ] Composite archetype expansion (1 Game Object $\to N$ MARIA DL headers).
-- [ ] Dynamic single continuous RAM Display List pool ($1900 \dots $1B7F) with double-buffering.
-- [ ] Automated vertical zone boundary splitting routine.
-- [ ] Clean modular ca65 library interface (`.include "maria.inc"`).
+> [!NOTE]
+> Detailed design specifications, dynamic pool memory layout, and implementation tasks for extracting `libmaria` using `examples/bug_ram` as the driving testbed are detailed in [docs/LIBMARIA_PLAN.md](libMariaPlan.md).
+
+- [ ] **Task 4.1: Strict Static (ROM) vs. Dynamic (RAM) Separation**:
+  - Wire static HUD elements and borders directly from ROM via DLL zone pointers (0 bytes RAM overhead).
+- [ ] **Task 4.2: Structure of Arrays (SoA) Object Management**:
+  - Implement parallel arrays indexed by entity slot: `obj_x`, `obj_y`, `obj_rom_ptr_lo`, `obj_rom_ptr_hi`, `obj_flags` (240 bytes RAM for 48 active entities).
+- [ ] **Task 4.3: Fast ROM-to-RAM Blast Copy Loop for DL Emission**:
+  - Dereference entity `rom_ptr` through Zero Page, blast-copy pre-baked 4-byte headers directly into RAM Display List, and write `hpos = obj_x`.
+- [ ] **Task 4.4: Composite Archetype Expansion**:
+  - Support multi-part / multi-layer entities where 1 Game Object expands into $N$ MARIA DL headers (e.g. 2-layer 320 mode composite).
+- [ ] **Task 4.5: Dynamic Single Continuous RAM Display List Pool ($1900 \dots $1B7F)**:
+  - Implement bump allocator pointer `dl_write_ptr` across double-buffered pools (`Buffer_A` and `Buffer_B`).
+  - Auto-emit `$00, $00` terminators per active zone.
+- [ ] **Task 4.6: Automated Vertical Zone Boundary Splitting Routine**:
+  - Calculate remaining lines in Zone $N$ ($\text{top\_h} = \text{ZoneEnd} - Y$).
+  - Emit Header 1 into Zone $N$ (pointing to `Graphic_Base` with height = `top_h`).
+  - Emit Header 2 into Zone $N+1$ (pointing to `Graphic_Base + top_h` with height = `height - top_h`).
+- [ ] **Task 4.7: Modular ca65 Library Interface**:
+  - Package engine as a clean reusable library module (`libmaria.s` and `maria.inc`).
+
+---
 
 ### Phase 5: Multi-Sprite Scaling & Starfield Demo
 
-- [ ] Starfield backdrop and multi-object depth scaling.
-- [ ] Depth-sorted zone insertion with `libmaria`.
-- [ ] Package with `a78tool` and verify in emulators (`test7800`, `a7800`).
+- [ ] **Task 5.1: Multi-Object Starfield Backdrop**:
+  - Implement pseudo-3D starfield with depth-based scrolling speed.
+- [ ] **Task 5.2: Depth-Sorted Multi-Sprite Scaling**:
+  - Manage multiple simultaneous entities scaling toward/away from the camera using pre-baked ROM scale tables.
+- [ ] **Task 5.3: Scanline DMA Budget Verification**:
+  - Profile worst-case scanline density to verify DMA margin remains within $\approx 430$ color cycles.
 
 ---
 
 ### Future Phase / TODO: Multi-Frame Animation & Viewport Scrolling
 
-*Deferred for later exploration so focus remains on the core pipeline and initial demos.*
-
-- [ ] `a78gfx` support for animated PNG sequences (`--frames <file_list_or_glob>`) and sprite sheet slicing (`--frame-width`, `--frame-height`).
-- [ ] Generation of sequential page-strided ROM tables and frame pointer arrays (`sprite_anim_table_lo/hi`).
-- [ ] Integration with `SpriteObject::frame` in `libmaria`.
-- [ ] Demo sample showing walk/thrust cycle animation at $0^\circ$.
-- [ ] Viewport Camera & Scrolling Exploration: Test horizontal ribbon clipping and vertical DLL zone truncation within the `libmaria` render pipeline.
+- [ ] **Task F.1: `a78gfx` Multi-Frame Animation Support**:
+  - Support numbered PNG series (`--frames <glob/list>`) and spritesheets (`--frame-width`, `--frame-height`).
+  - Generate sequential page-strided ROM tables and frame pointer arrays (`sprite_anim_table_lo/hi`).
+- [ ] **Task F.2: Animation Integration in `libmaria`**:
+  - Integrate `SpriteObject::frame` into the render pipeline.
+- [ ] **Task F.3: Viewport Camera & Scrolling Exploration**:
+  - Test horizontal ribbon clipping ($X < 0$ and $X > 160$).
+  - Test vertical fine scrolling via DLL zone truncation ($(16 - F)$ scanline trick).
