@@ -1,0 +1,12 @@
+GIMP Palette
+Name: Silly Bugs
+Columns: 4
+# 160A colors from the ST demo palette
+  0   0   0 Black
+255   0   0 Red
+182 182 182 Gray
+255   0 255 Magenta
+  0   0   0 Black
+218 182 145 Tan
+  0   0   0 Black
+  0   0   0 Black

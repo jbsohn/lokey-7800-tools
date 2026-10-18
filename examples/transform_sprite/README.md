@@ -13,9 +13,9 @@ A complete demonstration program showcasing **pre-baked 2D sprite rotation** ren
 2. **MARIA 256-Byte Page Striding**:
    - In MARIA hardware, scanline $Y$ of a graphic is fetched from:
      $$\text{Address} = (\text{addr\_hi} + Y) \times 256 + \text{addr\_lo}$$
-   - All 20 frames share the **same 16 pages (4 KB total)**.
+   - All 16 frames share the **same 16 pages (4 KB total)**.
    - Frame $i$ is selected simply by setting `addr_lo = ship_bank_frame_lo[i]`.
-   - Result: 20 transformation frames stored in just 4 KB of ROM with **zero runtime CPU transformation math**!
+   - Result: 16 transformation frames stored in just 4 KB of ROM with **zero runtime CPU transformation math**!
 
 3. **Dynamic RAM Display List (Glitch-Free & Tear-Free VBLANK Updates)**:
    - A single 6-byte Display List buffer in RAM at `$1800` (`dl_ship`):
@@ -50,9 +50,7 @@ Total ROM used: **~4.5 KB** (within 32 KB cartridge space).
 ### Prerequisites
 Ensure the following tools are installed on your system:
 - `ca65` and `ld65` (cc65 toolchain)
-- `a78tool` (header packaging)
-- `7800sign` (cartridge signature block)
-- `cargo` (Rust toolchain for `a78gfx`)
+- `cargo` (Rust toolchain for `a78gfx`, `a78sign`, and `a78tool`, which the Makefile builds from this repository)
 
 ### Build Commands
 From the `examples/transform_sprite/` directory:
@@ -67,8 +65,8 @@ This will automatically:
 2. Bake `assets/ship.png` into `ship_bank.bin` & `ship_bank.inc` (16 rotations with 2:1 PAR).
 3. Assemble `main.s` with `ca65`.
 4. Link `transform_sprite.bin` (32 KB raw ROM) with `ld65`.
-5. Sign the ROM with `7800sign`.
-6. Package the standard Atari 7800 emulator header with `a78tool` into `build/transform_sprite.a78`.
+5. Sign the ROM with `a78sign`.
+6. Package the standard Atari 7800 emulator header with `a78tool` into `transform_sprite.a78`.
 
 ---
 
@@ -99,4 +97,4 @@ make run-a7800 EMU_A7800=/path/to/mame64
    - Wing tips and thruster cowls appear in Fiery Amber (`$38`).
    - Fuselage armor plating appears in Star White (`$0E`).
    - Background is deep Space Black (`$00`).
-5. **Stability**: Zero tearing, flickering, or DMA glitches.
+4. **Stability**: Zero tearing, flickering, or DMA glitches.

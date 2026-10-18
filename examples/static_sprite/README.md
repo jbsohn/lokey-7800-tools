@@ -35,9 +35,9 @@ make all
 This will:
 1. Convert `assets/ship.png` to `ship.bin` & `ship.inc` using `a78gfx convert`.
 2. Assemble `main.s` with `ca65`.
-3. Link `build/static_sprite.bin` (32 KB ROM) with `ld65`.
-4. Sign the ROM with `7800sign`.
-5. Package `build/static_sprite.a78` with `a78tool`.
+3. Link `static_sprite.bin` (32 KB ROM) with `ld65`.
+4. Sign the ROM with `a78sign` (built from this repository).
+5. Package `static_sprite.a78` with `a78tool`.
 
 ---
 

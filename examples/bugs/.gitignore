@@ -1,0 +1,15 @@
+# Build artifacts (generated in this directory)
+*.o
+*.bin
+*.rom
+*.a78
+map.txt
+
+# Emulator runtime cache / state
+.test7800/
+cfg/
+
+# Generated graphics files (produced by a78gfx convert from assets/)
+beetle.inc
+circle.inc
+square.inc

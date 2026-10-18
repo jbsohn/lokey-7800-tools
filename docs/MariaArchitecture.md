@@ -1,6 +1,6 @@
-# Atari 7800 MARIA Architecture & `libmaria` Specification
+# Atari 7800 MARIA Architecture & `lokeydll` Specification
 
-This document captures the architectural insights, hardware mechanics, memory budgets, and design specification for **`libmaria`**, an open-source, modular 6502 assembly sprite and display engine for the Atari 7800 using the **ca65 / ld65** toolchain.
+This document captures the architectural insights, hardware mechanics, memory budgets, and design specification for **`lokeydll`**, an open-source, modular 6502 assembly sprite and display engine for the Atari 7800 using the **ca65 / ld65** toolchain.
 
 >
 > **Author's Note / Living Document**: Everything documented here was discovered through reading vintage hardware manuals, inspecting community research, and actively building and testing working code samples on emulators and assembler toolchains with AI assistance. I might not have every nuance 100% right yet, but this is an evolving, living document that will continue to be refined and updated as I learn more through hands-on development.
@@ -22,12 +22,12 @@ The Atari 7800 graphics chip (**MARIA**) is not a frame buffer device, nor is it
 
 The graphics engine is built on a clear architectural blueprint: **trade inexpensive Flash ROM to eliminate runtime CPU math, minimize RAM footprint, and maximize frame rate**.
 
-| Architectural Dimension | Traditional 7800 Approach | `libmaria` + `a78gfx` Pipeline |
+| Architectural Dimension | Traditional 7800 Approach | `lokeydll` + `a78gfx` Pipeline |
 | :--- | :--- | :--- |
 | **Heavy Math & Pre-Processing** | Runtime 6502 math or hand-drawn frames | Offline host compilation (`a78gfx` discrete angle rotations with PAR, scaling, flips; RotSprite & layer flattening planned) |
 | **ROM Storage** | Uncompressed monolithic tiles | Pre-baked page-strided graphics & DL templates in banked ROM |
 | **RAM Footprint** | Ad-hoc buffers scattered across RAM | Standardized $< 1\text{ KB}$ footprint for Display Lists and active game entities |
-| **Runtime 6502 CPU Work** | Complex zone clipping and manual table math | Fast blast-copies of 4-byte pre-baked headers into RAM Display Lists ($\approx 80\text{ cycles/sprite}$) |
+| **Runtime 6502 CPU Work** | Complex zone clipping and manual table math | Picture bytes stored on the object once; each frame writes 4-byte headers from that slot |
 | **Visual Result** | Static or jittery sprites with manual clipping | 16-bit arcade-quality rotation, scaling, and multi-layer visuals with **$< 20\%$ CPU** |
 | **Free CPU Remaining** | CPU bottlenecked by graphics setup | **$> 75\%$ of 6502 CPU remains 100% free** for game AI, collisions, physics, and gameplay at 60 FPS! |
 
@@ -192,9 +192,9 @@ Layering objects is cheap and safe for **player characters, bosses, cursors, and
 
 ---
 
-## 4. `libmaria` Software Architecture: Game Objects vs. Graphics Separation
+## 4. `lokeydll` Software Architecture: Game Objects vs. Graphics Separation
 
-A core design tenet of `libmaria` is the **strict separation between Game Objects and the MARIA Display Pipeline**. Game logic never directly manipulates Display Lists, zone pointers, or MARIA registers.
+A core design tenet of `lokeydll` is the **strict separation between Game Objects and the MARIA Display Pipeline**. Game logic never directly manipulates Display Lists, zone pointers, or MARIA registers.
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -206,7 +206,7 @@ A core design tenet of `libmaria` is the **strict separation between Game Object
                             │
                             ▼
 ┌────────────────────────────────────────────────────────┐
-│  STAGE 2: `libmaria` Render Pipeline (DL Assembler)    │
+│  STAGE 2: `lokeydll` Render Pipeline (DL Assembler)    │
 │  - Iterates active Game Objects                        │
 │  - Expands Composite / Multi-Layer Meta-Sprites        │
 │  - Performs automatic vertical Zone Boundary Splitting │
@@ -238,40 +238,24 @@ To protect the 7800's precious 4 KB of RAM and minimize CPU cycles, screen graph
 
 ---
 
-### 4.2 The High-Level `GameObject` Abstraction
+### 4.2 The High-Level Object Abstraction
 
-Game logic operates on high-level entities that store coordinates and a direct 16-bit pointer into ROM:
-
-```ca65
-.struct GameObject
-    x_pos       .byte   ; 0..159 (Horizontal pixel position)
-    y_pos       .byte   ; 0..239 (Vertical scanline position)
-    rom_ptr     .word   ; 16-bit direct pointer to pre-baked ROM archetype
-    flags       .byte   ; Active, Visible, Flip X, Flip Y
-.endstruct
-```
-
-#### Structure of Arrays (SoA) Layout in RAM
-
-To avoid costly 16-bit pointer arithmetic on the 6502, active objects are stored in parallel arrays indexed by `X`:
+Game logic operates on whole-pixel positions. The picture is attached to a slot once, and the builder does not follow a pointer on the frames where only the position changed.
 
 ```ca65
-MAX_OBJECTS = 48
-
-obj_x:          .res MAX_OBJECTS    ; 48 bytes
-obj_y:          .res MAX_OBJECTS    ; 48 bytes
-obj_rom_ptr_lo: .res MAX_OBJECTS    ; 48 bytes (Low byte of ROM archetype)
-obj_rom_ptr_hi: .res MAX_OBJECTS    ; 48 bytes (High byte of ROM archetype)
-obj_flags:      .res MAX_OBJECTS    ; 48 bytes
+; Slot Y. The game writes the position. lokeydll_set_picture writes the picture.
+lokeydll_obj_x,y        ; 0..159
+lokeydll_obj_y,y        ; playfield scanline
+; picture bytes, private to the builder: gfx low, pal/width, adjusted gfx high, spill limit
 ```
 
-*Total RAM for 48 active dynamic entities: **240 bytes**.*
+The columns are parallel arrays, not a struct the game walks with a pointer. `sta lokeydll_obj_x,y` is a 4-cycle absolute store, and the same form is how the builder reads the slot back. Sixty slots are 6 bytes each: X, Y, and the four picture bytes.
 
 ---
 
 ### 4.3 Pre-Baked ROM Archetypes & Meta-Sprites
 
-The `rom_ptr` points directly into ROM to an archetype block generated at build time by `a78gfx`:
+`lokeydll_set_picture` reads a four-byte archetype generated from an `a78gfx` picture. A multi-part picture, still to come, would be a larger ROM block the same call could walk:
 
 ```ca65
 ; In ROM: Pre-baked by a78gfx
@@ -287,30 +271,31 @@ player_ship_angle_0:
 
 #### How Game Logic Changes Shapes or Animations
 
-Game logic never touches palettes or widths. To rotate or animate, it simply updates `rom_ptr`:
+Game logic never touches palettes or widths. To rotate or animate, it points at the new archetype and attaches it again. `Y` is the object slot:
 
 ```ca65
 lda #<player_ship_angle_1
-sta obj_rom_ptr_lo,x
+sta lokeydll_param_arch_lo
 lda #>player_ship_angle_1
-sta obj_rom_ptr_hi,x
+sta lokeydll_param_arch_hi
+jsr lokeydll_set_picture
 ```
 
 #### Fast Traversal & Display List Emission
 
-During the render pass, the engine performs a fast blast-copy directly from ROM into the active zone's RAM Display List:
+`lokeydll_set_picture` reads the archetype once and stores `addr_lo`, `pal_w`, `gfx_hi + height - 16`, and the spill limit on the slot. Each frame `lokeydll_build`:
 
-1. Loads `obj_rom_ptr` into a Zero Page pointer (`ptr_lo, ptr_hi`).
-2. Reads `num_parts`.
-3. For each part, copies the 3 pre-baked bytes (`addr_lo`, `pal_w`, `addr_hi`) directly from ROM into RAM.
-4. Writes `obj_x` into `hpos`.
-Zero runtime math, zero palette decoding, zero temporary RAM.
+1. Counts how many headers land in each zone, including the second header when the sprite crosses a 16-line boundary.
+2. Packs those zones into the hidden pool and points the DLL at them.
+3. Adds the fine Y offset to the stored graphics high byte and writes the 4-byte direct header.
+
+Changing angle, scale, or frame is another `lokeydll_set_picture` on that slot. The per-frame path does not read the archetype.
 
 ---
 
 ### 4.4 Automatic Zone Boundary Splitting
 
-When an entity's vertical position straddles a zone boundary ($Y + \text{height} > \text{ZoneEnd}$), `libmaria` automatically:
+When an entity's vertical position straddles a zone boundary ($Y + \text{height} > \text{ZoneEnd}$), `lokeydll` automatically:
 
 1. Calculates lines remaining in `Zone N`: $\text{top\_h} = \text{ZoneEnd} - Y$.
 2. Emits Header 1 into `Zone N` pointing to `Graphic_Base` with height = $\text{top\_h}$.
@@ -321,19 +306,19 @@ When an entity's vertical position straddles a zone boundary ($Y + \text{height}
 
 ### 4.5 Dynamic Single-Pool Display List Allocation
 
-Instead of partitioning RAM into 15 rigid chunks, all zone lists share a single continuous pool in RAM ($1900 \dots $1BFF):
+Instead of partitioning RAM into 13 rigid chunks, all playfield zone lists share a single continuous pool in RAM (pool A at `$1A00–$1BFF`, pool B at `$1C00–$1DFF`):
 
-- `dl_write_ptr`: Current insertion point in RAM.
+- `lokeydll_ptr`: Current insertion point in RAM.
 - Empty zones cost only **2 bytes** (`$00, $00`).
 - Busy zones can expand dynamically up to the hardware DMA limit.
-- **Double buffering**: Two identical pools (`Buffer_A` and `Buffer_B`). While MARIA displays Buffer A, the 6502 builds Buffer B. At VBLANK, swapping `DPPL` flips the screen tear-free.
+- **Double buffering**: Two identical 512-byte pools. While MARIA displays pool A, the 6502 builds pool B. At VBLANK, swapping `DPPL` flips the screen tear-free.
 
 ---
 
 ### 4.6 Architectural Planning: Viewport Scrolling via Render Pipeline Decoupling
 
 > [!NOTE]
-> **Planning & Design Preview**: This section outlines the theoretical architectural roadmap for scrolling support in `libmaria`. Because MARIA lacks hardware scroll registers (`SCROLL_X` / `SCROLL_Y`), scrolling must be achieved in software. The strict separation between high-level **Game Objects** and low-level **MARIA Display Lists** allows this to be handled entirely inside the render pipeline—in theory—without polluting game simulation logic.
+> **Planning & Design Preview**: This section outlines the theoretical architectural roadmap for scrolling support in `lokeydll`. Because MARIA lacks hardware scroll registers (`SCROLL_X` / `SCROLL_Y`), scrolling must be achieved in software. The strict separation between high-level **Game Objects** and low-level **MARIA Display Lists** allows this to be handled entirely inside the render pipeline—in theory—without polluting game simulation logic.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -344,7 +329,7 @@ Instead of partitioning RAM into 15 rigid chunks, all zone lists share a single 
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│            STAGE 2: `libmaria` Render Pipeline (Screen Mapper)         │
+│            STAGE 2: `lokeydll` Render Pipeline (Screen Mapper)         │
 │                                                                        │
 │ 1. Viewport Translation:                                               │
 │    $X_{screen} = X_{world} - Camera_{X}$                               │
@@ -376,8 +361,8 @@ Instead of partitioning RAM into 15 rigid chunks, all zone lists share a single 
 #### How Horizontal Scrolling Will Be Attempted
 
 1. **Background Ribbons**: `a78gfx` bakes wide horizontal terrain ribbons into ROM (e.g., 320 pixels wide).
-2. **Zone Header Clipping**: In each zone, only 1 or 2 background headers are needed. `libmaria` clips the ribbon at screen edges:
-   - When scrolling off the left edge ($X < 0$), `libmaria` calculates $\text{clipped\_bytes} = |X| / 4$, advances `addr_lo += clipped_bytes`, decreases `width -= clipped_bytes`, and pins `hpos = 0`.
+2. **Zone Header Clipping**: In each zone, only 1 or 2 background headers are needed. `lokeydll` clips the ribbon at screen edges:
+   - When scrolling off the left edge ($X < 0$), `lokeydll` calculates $\text{clipped\_bytes} = |X| / 4$, advances `addr_lo += clipped_bytes`, decreases `width -= clipped_bytes`, and pins `hpos = 0`.
    - When entering from the right, `width` is capped to fit within the 160-pixel boundary.
 3. **Parallax for Free**: Different zones (e.g., distant mountain zone vs. foreground track zone) can simply sample different camera multipliers ($0.5\times \text{ vs. } 1.0\times$), achieving hardware-free parallax scrolling with minimal CPU cost.
 
@@ -385,7 +370,7 @@ Instead of partitioning RAM into 15 rigid chunks, all zone lists share a single 
 
 1. **Zone Truncation Trick (Fine Vertical Scroll)**:
    - For fine vertical scrolling ($F = Camera_Y \pmod{16}$):
-     - At VBLANK, `libmaria` adjusts Zone 0's height in the DLL to $(16 - F)$ scanlines.
+     - At VBLANK, `lokeydll` adjusts Zone 0's height in the DLL to $(16 - F)$ scanlines.
      - Adjusts the bottom zone's height to $(F)$ scanlines.
      - Adjusts Zone 0's graphics base pointer `addr_hi` by $+F$ scanline pages.
      - The entire display shifts vertically by $F$ fine scanlines with zero tile redrawing.
@@ -396,32 +381,36 @@ Instead of partitioning RAM into 15 rigid chunks, all zone lists share a single 
 
 ## 5. Total Frame & Memory Budgets
 
-### 5.1 RAM Budget (Total: ~1.5 KB out of 4 KB available)
+### 5.1 RAM Budget
+
+The 7800 exposes 3.5 KB of usable RAM: `$1800–$1FFF` (2 KB) plus `$2200–$27FF` (1.5 KB). `$2000–$21FF` is a hardware hole and must not be used.
 
 ```text
 Address Range       Size      Allocation
 -------------       ----      ----------
-$1800 - $18EF       240 B     Active Dynamic Objects Table (48 objects * 5 bytes)
-$18F0 - $18FF        16 B     Engine State, Zone Indices, ZP shadow vars
-$1900 - $1AFF       512 B     Display List Dynamic Pool Buffer A
-$1B00 - $1CFF       512 B     Display List Dynamic Pool Buffer B
-$1D00 - $1D7F        50 B     Display List List (DLL) Buffer A (16 zones)
-$1D80 - $1DFF        50 B     Display List List (DLL) Buffer B (16 zones)
-$1E00 - $27FF     2,560 B     100% FREE FOR GAME LOGIC, AUDIO, RAM TILES & SCORES!
+$0040 - $007F        64 B     Game zero page
+$0080 - $008F        16 B     lokeydll zero page (13 bytes used)
+$1800 - $19FF       512 B     Object table (6 columns x 60 slots) + zone counts/pointers
+$1A00 - $1BFF       512 B     Display-list pool A
+$1C00 - $1DFF       512 B     Display-list pool B
+$1E00 - $1E7F       128 B     Display-list lists (DLL A + DLL B)
+$1E80 - $1FFF       384 B     Free
+$2000 - $21FF       512 B     Hardware hole - NOT RAM
+$2200 - $27FF     1,536 B     Free for game state (bugs-lokey physics lives here)
 ```
 
-### 5.2 CPU Frame Budget (Robotron Scenario: 50 Moving Sprites)
+The library reserves 1,664 bytes of RAM; the remaining 1,920 bytes of the 3.5 KB stay free for the game.
+
+### 5.2 CPU Frame Budget (60 Straddling Sprites)
 
 - **Total CPU cycles per frame (NTSC 60 Hz)**: $29,833$ cycles.
 - **MARIA DMA pauses (worst-case heavy display)**: $\approx 11,000$ cycles.
 - **Net CPU cycles available for 6502**: $\approx 18,800$ cycles.
-- **Engine Processing Cost**:
-  - Entity loop + zone lookup + header emission: $\approx 80\text{ cycles/sprite}$.
-  - $50 \text{ sprites} \times 80 = \mathbf{4,000\text{ cycles}}$ ($\approx 21\%$ of available CPU).
-  - Zone boundary splits (~15% of sprites): $\approx 300\text{ cycles}$.
-  - Double buffer pointer flip & terminator write: $\approx 150\text{ cycles}$.
-  - **Total Engine Overhead: $\approx 4,450\text{ cycles}$ ($\approx 23\%$)**.
-- **Free CPU remaining for Game AI, Collisions, Physics, and Audio**: **$> 14,000\text{ cycles}$ ($77\%$)**.
+- **Engine Processing Cost** (measured by executing `lokeydll_build` in the linked `bugs-lokey` ROM):
+  - Clearing the zone counts, packing the pool, and rewriting the 13 playfield DLL entries is about 1,500 cycles regardless of sprite count.
+  - A 16-line sprite that crosses a zone writes two 4-byte headers. Those stores, plus the count of headers per zone, dominate. Sixty such sprites cost **about 21,000 cycles** for the whole build.
+  - Two indirect header writes are already most of 150 cycles before any zone math, so the older 80-cycle-per-sprite figure does not describe a sprite that straddles a zone.
+- Physics for the same 60 bugs is separate and still belongs to the game. Together with a heavy DMA frame, 60 straddling sprites sit near the whole NTSC frame. The object table removed the extra per-sprite copy that the queue used to do.
 
 ---
 
@@ -486,10 +475,11 @@ While 1980s commercial cartridges were strictly constrained by chip costs to 32 
 9. **Hardware Flip Emulation (`--flip-x`, `--flip-y`)**:
    - MARIA lacks hardware sprite mirroring bits. `a78gfx` automatically generates horizontal and vertical flipped sprite variants in ROM, so character turnaround animations cost zero manual artwork time.
 10. **Multi-Frame Animation Sequences (PNG Series / Spritesheets)**:
-   - Supports animation at $0^\circ$ (and optionally per-angle animations) by accepting either:
-     - A sequence of numbered PNG files (e.g., `walk_00.png`, `walk_01.png`, `walk_02.png` or `--frames <glob/list>`), or
-     - A horizontal/vertical sprite sheet with `--frame-width` and `--frame-height`.
-   - Generates pre-strided ROM tables for each frame step and emits ca65 frame lookup tables:
+
+- Supports animation at $0^\circ$ (and optionally per-angle animations) by accepting either:
+  - A sequence of numbered PNG files (e.g., `walk_00.png`, `walk_01.png`, `walk_02.png` or `--frames <glob/list>`), or
+  - A horizontal/vertical sprite sheet with `--frame-width` and `--frame-height`.
+- Generates pre-strided ROM tables for each frame step and emits ca65 frame lookup tables:
 
      ```ca65
      sprite_anim_frame_0: .byte ...
@@ -498,11 +488,14 @@ While 1980s commercial cartridges were strictly constrained by chip costs to 32 
      sprite_anim_table_hi: .byte >sprite_anim_frame_0, >sprite_anim_frame_1 ...
      ```
 
-   - In 6502 code, indexing an animation frame at $0^\circ$ is identical in CPU cost to indexing an angle or scale (single `LDA table,X` in 4 cycles).
+- In 6502 code, indexing an animation frame at $0^\circ$ is identical in CPU cost to indexing an angle or scale (single `LDA table,X` in 4 cycles).
 
-### 6.3 Flag-Driven Shape & Orientation Management in `libmaria`
+### 6.3 Flag-Driven Shape & Orientation Management in `lokeydll`
 
-In the game entity model, rotation, scale, and frame selection are controlled by `SpriteObject::flags`, `SpriteObject::scale`, and `SpriteObject::angle`:
+> [!NOTE]
+> **Planned**: Rotation, scaling, and animation are future features. The current library exposes a flat object slot — `lokeydll_obj_x` / `lokeydll_obj_y` for position, and `lokeydll_set_picture` to attach a picture (see §4.2/§4.3). The `SpriteObject` struct below is the forward-looking entity model that a78gfx-generated angle/scale/frame tables will feed.
+
+In the planned entity model, rotation, scale, and frame selection are controlled by `SpriteObject::flags`, `SpriteObject::scale`, and `SpriteObject::angle`:
 
 ```ca65
 .struct SpriteObject
@@ -534,7 +527,7 @@ When `DrawObject` runs:
 
 ## 7. Architectural Comparison
 
-| **Dimension** | 1980s Monolithic DASM Games | Modern `libmaria` + ca65 |
+| **Dimension** | 1980s Monolithic DASM Games | Modern `lokeydll` + ca65 |
 | :--- | :--- | :--- |
 | **Toolchain** | Single monolithic `.asm` file, hardcoded `ORG` | Modular `.s` modules, relocatable `ld65` segments, clean Makefiles |
 | **Data Layout** | Magic hex numbers, manual offsets | Hardware-accurate `.struct` definitions (`MariaDLLEntry`, `MariaDLHeader`) |
@@ -545,10 +538,10 @@ When `DrawObject` runs:
 
 ---
 
-## 8. `libmaria` Development Roadmap: Multi-Sprite Transformation & Scaling Demos
+## 8. `lokeydll` Development Roadmap: Multi-Sprite Transformation & Scaling Demos
 
 > [!NOTE]
-> The combined audio and video demo featuring the YM2149 chiptune sound engine belongs in the **`ym2149-tools`** repository. This repository focuses strictly on the MARIA graphics coprocessor, toolchain utilities (`a78tool`, `a78gfx`), and the `libmaria` display engine.
+> The combined audio and video demo featuring the YM2149 chiptune sound engine belongs in the **`ym2149-tools`** repository. This repository focuses strictly on the MARIA graphics coprocessor, toolchain utilities (`a78tool`, `a78gfx`), and the `lokeydll` display engine.
 
 ### Visual Objectives
 
@@ -564,11 +557,11 @@ When `DrawObject` runs:
    - Indexed PNG loader and GIMP palette (`.gpl`) importer with perceptual quantization.
    - Pre-baked scaling (`--scales <N>`), discrete rotations (`--angles <N>`), and flips (`--flip-x`).
    - 256-byte page-strided transposition and ca65 assembly header emitter.
-2. **Step 2: Core `libmaria` 6502 Engine**:
+2. **Step 2: Core `lokeydll` 6502 Engine**:
    - Double-buffered zone allocator in RAM ($< 1\text{ KB}$ footprint).
    - `DrawSprite(x, y, scale, angle, type_id)` with automated zone boundary splitting.
 3. **Step 3: Verification & Packaging**:
-   - Assemble with `ca65`/`ld65`, sign with `7800sign`, and package with `a78tool`.
+   - Assemble with `ca65`/`ld65`, sign with `a78sign`, and package with `a78tool` (both built from this repository).
    - Boot and verify in both `test7800` and `a7800` (MAME).
 
 ---
@@ -577,7 +570,7 @@ When `DrawObject` runs:
 
 ### Phase 0: Foundations & Minimal POC (`examples/pixel`)
 
-- [x] Document MARIA hardware mechanics, DMA limits, and `libmaria` architecture.
+- [x] Document MARIA hardware mechanics, DMA limits, and `lokeydll` architecture.
 - [x] Configure workspace `Cargo.toml` for `a78tool` and `a78gfx`.
 - [x] Implement minimal ca65 proof-of-concept (`examples/pixel`):
   - [x] Direct DL / DLL structures (`include/maria.inc`).
@@ -605,7 +598,8 @@ When `DrawObject` runs:
 
 ### Phase 1: `a78gfx` Asset Pipeline (Rust CLI)
 
-#### Completed Features:
+#### Completed Features
+
 - [x] Indexed PNG parsing (160A 4-color palettes, 320 modes).
 - [x] 256-byte page-strided scanline transposition for MARIA hardware DMA (`addr + offset`).
 - [x] Discrete inverse-trigonometric rotation generator (`--angles <N>`, 2:1 pixel aspect ratio correction).
@@ -620,7 +614,8 @@ When `DrawObject` runs:
 - [x] Hardware color table and register equates generation (`MariaColor`, `ATARI_7800_NTSC_PALETTE`).
 - [x] Subpalette slot selection (`--subpalette <0..7>`) and DL header `pal_w` bit embedding.
 
-#### Pending Tasks:
+#### Pending Tasks
+
 - [ ] **Task 1.1: Multi-Page Set Banking in `MariaSpriteBank` ($N \times 256$-byte pages)**:
   - *Context*: In `MariaSpriteBank::add_frame`, total frame width across all banked frames is capped at 256 bytes (`next_end > 256`). For a 16x16 sprite (4 bytes/line in 160A), this limits the bank to 64 frames. Combining 16 rotations $\times$ 5 scales (80 frames = 320 bytes) or larger sprites causes a fatal conversion error.
   - *Action*: Extend `MariaSpriteBank` to allocate multiple 256-byte page blocks (`page_sets: Vec<Vec<Vec<u8>>>`), track which page-set base address (`addr_hi`) each frame belongs to, and emit corresponding `_bank_pages_0`, `_bank_pages_1` symbols and table arrays (`bank_frame_hi: .byte >page_0, >page_1...`).
@@ -644,7 +639,7 @@ When `DrawObject` runs:
 - [x] Single 16x16 4-color spaceship centered in Zone 7 (`assets/ship.png`, `ship.gpl`).
 - [x] 256-byte page-strided scanline alignment (`ship_pages`).
 - [x] 100% ROM-resident Display List (`dl_ship` with direct header + terminator) costing 0 bytes RAM.
-- [x] Build automated via Makefile, signed via `7800sign`, packaged via `a78tool`.
+- [x] Build automated via Makefile, signed via `a78sign`, packaged via `a78tool`.
 
 ---
 
@@ -652,14 +647,16 @@ When `DrawObject` runs:
 
 *Objective: Load a PNG, center it on screen, and continuously cycle through discrete pre-baked rotations and scale steps in a loop without full game logic.*
 
-#### Completed Work:
+#### Completed Work
+
 - [x] Canonical source asset (`assets/ship.png` - 16x16 4-color indexed sprite).
 - [x] Process asset through `a78gfx bake` with 16 discrete rotations and 2:1 PAR compensation (`ship_bank.bin`, `ship_bank.inc`).
 - [x] Dynamic RAM Display List at `$1800` updated during VBLANK (16 CPU cycles per update).
 - [x] 60 Hz frame synchronization via `MSTAT` VBLANK polling.
 - [x] Build automated via Makefile and verified in `test7800` and `a7800`.
 
-#### Pending Tasks:
+#### Pending Tasks
+
 - [ ] **Task 2.1: True Double-Buffered DL Zone Allocation (`dl_buffer_0` / `dl_buffer_1`)**:
   - *Context*: Currently uses a single 6-byte buffer `dl_ship` at `$1800` updated directly during VBLANK.
   - *Action*: Allocate two separate RAM buffers (`dl_buffer_0` at `$1900`, `dl_buffer_1` at `$1A00`); swap the zone's DL pointer or DLL base during VBLANK; construct the next frame in the inactive buffer.
@@ -672,48 +669,46 @@ When `DrawObject` runs:
 
 ---
 
-### Phase 3: Classic "Atari ST Dev Kit Bug" Demo (`examples/bug_ram`)
+### Phase 3: Classic "Atari ST Dev Kit Bug" Demo (`examples/bugs`)
 
 *Objective: Recreate the iconic bouncing bug sample from the Atari ST development kit, demonstrating dynamic positioning / frame buffer / multi-zone rendering on MARIA.*
 
 - [x] **Task 3.1: Asset Preparation**:
   - Convert classic Atari ST beetle/bug artwork for 160A 4-color mode and 320A high-res overlay mode using `a78gfx`.
-  - *Status*: 160A done (indexed PNGs decoded from `bugs-st/IMAGES.S`). 320A overlay not done.
+  - *Status*: 160A done (PNGs decoded from `bugs-st/IMAGES.S`, converted with `a78gfx --par` to 8×16). 320A overlay not done.
 - [x] **Task 3.2: 6502 Bouncing Physics & Coordinate Simulation**:
   - Implement 8.8 fixed-point $(X, Y)$ position and $(V_x, V_y)$ velocity logic.
-  - Implement screen edge collision detection and bounce deflection ($160 \times 240$ boundaries).
-  - *Status*: Ported from `upd_gravity` using a 160×200 field to match the ST screen.
+  - Implement screen edge collision detection and bounce deflection (160×200 boundaries).
+  - *Status*: Ported from `upd_gravity`. X is halved for the 160-wide screen. The playfield is the ST's 160×200, below one blank 16-line zone so it clears the top overscan. The edge test is an unsigned compare, because a negative-flag test treats positions 128 and up as off-screen.
 - [x] **Task 3.3: Multi-Zone Display List Generation & Dynamic Traversal**:
   - Dynamically compute which 16-scanline zone(s) the bug occupies based on `y_pos`.
   - Handle smooth vertical traversal across zone boundaries.
 - [ ] **Task 3.4: Build, Sign, and Emulator Verification**:
   - Package with `a78tool` and verify tear-free animation in `test7800` and `a7800`.
-  - *Status*: Builds and signs. Emulator verification pending.
+  - *Status*: Builds and signs (the build now fails if signing fails). a7800 shows the sprites falling and bouncing correctly in the 160×200 playfield. `test7800` has not been run.
 
 ---
 
-### Phase 4: Core `libmaria` 6502 Engine Modularization
+### Phase 4: Core `lokeydll` 6502 Engine Modularization
 
 > [!NOTE]
-> Detailed design specifications, dynamic pool memory layout, and implementation tasks for extracting `libmaria` using `examples/bug_ram` as the driving testbed are detailed in [docs/LIBMARIA_PLAN.md](libMariaPlan.md).
+> Detailed design specifications, dynamic pool memory layout, and implementation tasks are in [docs/lokeydllPlan.md](lokeydllPlan.md). The first caller is [`examples/bugs-lokey`](../examples/bugs-lokey). [`examples/bugs`](../examples/bugs) keeps the hand-built lists.
 
 - [ ] **Task 4.1: Strict Static (ROM) vs. Dynamic (RAM) Separation**:
   - Wire static HUD elements and borders directly from ROM via DLL zone pointers (0 bytes RAM overhead).
-- [ ] **Task 4.2: Structure of Arrays (SoA) Object Management**:
-  - Implement parallel arrays indexed by entity slot: `obj_x`, `obj_y`, `obj_rom_ptr_lo`, `obj_rom_ptr_hi`, `obj_flags` (240 bytes RAM for 48 active entities).
-- [ ] **Task 4.3: Fast ROM-to-RAM Blast Copy Loop for DL Emission**:
-  - Dereference entity `rom_ptr` through Zero Page, blast-copy pre-baked 4-byte headers directly into RAM Display List, and write `hpos = obj_x`.
+- [x] **Task 4.2: Structure of Arrays (SoA) Object Management**:
+  - `lokeydll_obj_x` and `lokeydll_obj_y` are the whole-pixel position, indexed by `Y`. `lokeydll_set_picture` stores the picture bytes on that same slot. Sixty slots.
+- [x] **Task 4.3: Header emission from the object slot**:
+  - `lokeydll_build` counts headers per zone, then writes the 4-byte direct header from the slot. The archetype is not read on frames that only move the object.
 - [ ] **Task 4.4: Composite Archetype Expansion**:
   - Support multi-part / multi-layer entities where 1 Game Object expands into $N$ MARIA DL headers (e.g. 2-layer 320 mode composite).
-- [ ] **Task 4.5: Dynamic Single Continuous RAM Display List Pool ($1900 \dots $1B7F)**:
-  - Implement bump allocator pointer `dl_write_ptr` across double-buffered pools (`Buffer_A` and `Buffer_B`).
-  - Auto-emit `$00, $00` terminators per active zone.
-- [ ] **Task 4.6: Automated Vertical Zone Boundary Splitting Routine**:
-  - Calculate remaining lines in Zone $N$ ($\text{top\_h} = \text{ZoneEnd} - Y$).
-  - Emit Header 1 into Zone $N$ (pointing to `Graphic_Base` with height = `top_h`).
-  - Emit Header 2 into Zone $N+1$ (pointing to `Graphic_Base + top_h` with height = `height - top_h`).
-- [ ] **Task 4.7: Modular ca65 Library Interface**:
-  - Package engine as a clean reusable library module (`libmaria.s` and `maria.inc`).
+- [x] **Task 4.5: Dynamic Single Continuous RAM Display List Pool (`$1A00 \dots $1DFF`)**:
+  - `lokeydll_build` packs the non-empty playfield zones into the hidden 512-byte pool and points the DLL at them.
+  - Auto-emits `$00, $00` terminators per active zone.
+- [x] **Task 4.6: Automated Vertical Zone Boundary Splitting**:
+  - A sprite that straddles a 16-line boundary writes two headers: the top zone uses `gfx_hi + height + fine - 16`, the next zone uses that address minus 16. 16-line holey DMA zeroes the pages outside the sprite's 4 KB block.
+- [x] **Task 4.7: Modular ca65 Library Interface**:
+  - Package the engine as `lokeydll.lib` (`lokeydll.s` archived with `ar65`, public include `lokeydll.inc`).
 
 ---
 
@@ -733,7 +728,7 @@ When `DrawObject` runs:
 - [ ] **Task F.1: `a78gfx` Multi-Frame Animation Support**:
   - Support numbered PNG series (`--frames <glob/list>`) and spritesheets (`--frame-width`, `--frame-height`).
   - Generate sequential page-strided ROM tables and frame pointer arrays (`sprite_anim_table_lo/hi`).
-- [ ] **Task F.2: Animation Integration in `libmaria`**:
+- [ ] **Task F.2: Animation Integration in `lokeydll`**:
   - Integrate `SpriteObject::frame` into the render pipeline.
 - [ ] **Task F.3: Viewport Camera & Scrolling Exploration**:
   - Test horizontal ribbon clipping ($X < 0$ and $X > 160$).

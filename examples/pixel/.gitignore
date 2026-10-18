@@ -1,5 +1,4 @@
-# Build output directory
-build/
+# Build artifacts (generated in this directory)
 *.o
 *.bin
 *.rom
@@ -7,3 +6,4 @@ build/
 
 # Emulator runtime cache / state
 .test7800/
+cfg/
