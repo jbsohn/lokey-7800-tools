@@ -1,12 +1,5 @@
 /target
 **/*.rs.bk
-*.a78
-*.rom
-*.bin
 .DS_Store
 .idea/
-
-# Build output directory
-build/
-*.o
 .agent_tmp/

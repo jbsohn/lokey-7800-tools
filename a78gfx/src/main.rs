@@ -1,5 +1,5 @@
 use a78gfx::{AssemblerType, GfxFile, MariaMode, MariaSpriteBank, PaletteFile};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -107,8 +107,15 @@ enum Commands {
         #[arg(long, visible_alias = "square-source")]
         par: bool,
 
-        /// Output 256-byte page-strided binary layout instead of contiguous (for .bin outputs)
-        #[arg(long, default_value_t = true)]
+        /// Output 256-byte page-strided binary layout (default). `--page-strided=false` writes contiguous scanlines (for .bin outputs)
+        #[arg(
+            long,
+            default_value_t = true,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            require_equals = true,
+            default_missing_value = "true"
+        )]
         page_strided: bool,
     },
 
@@ -631,6 +638,27 @@ mod tests {
         );
         assert_eq!(targets2.bin, Some(PathBuf::from("data.bin")));
         assert_eq!(targets2.header, Some(PathBuf::from("defs.inc")));
+    }
+
+    fn parse_page_strided(extra: &[&str]) -> Option<bool> {
+        let mut args = vec!["a78gfx", "convert", "ship.png", "-o", "ship.bin"];
+        args.extend_from_slice(extra);
+        match Cli::try_parse_from(args) {
+            Ok(Cli {
+                command: Commands::Convert { page_strided, .. },
+            }) => Some(page_strided),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_cli_convert_page_strided_flag() {
+        assert_eq!(parse_page_strided(&[]), Some(true));
+        assert_eq!(parse_page_strided(&["--page-strided"]), Some(true));
+        assert_eq!(parse_page_strided(&["--page-strided=true"]), Some(true));
+        assert_eq!(parse_page_strided(&["--page-strided=false"]), Some(false));
+        // require_equals: a bare value must not be swallowed as the flag's argument.
+        assert_eq!(parse_page_strided(&["--page-strided", "false"]), None);
     }
 
     #[test]
