@@ -434,9 +434,9 @@ impl A78Header {
             .clone()
             .unwrap_or_else(|| "YM2149 CART".to_string());
         let mut cart_type = cfg.cart_type;
-        if cfg.audio & AudioFlags::YM2149 != 0 {
-            cart_type |= 0x0004;
-        }
+        // YM2149 is the audio word at offsets 66–67 (0x0800). Bit 2 of the
+        // cart-type word (0x0004) is SuperCart RAM at $4000. Setting it hides
+        // the bottom 16KB of a flat 48KB image.
         if cfg.audio & AudioFlags::POKEY_4000 != 0 {
             cart_type |= 0x0008;
         }
@@ -500,7 +500,7 @@ impl A78Header {
     #[must_use]
     pub fn mapper_name(&self) -> &'static str {
         match self.mapper {
-            0 => "0 (Linear / Fixed 32K)",
+            0 => "0 (Linear / Fixed 32K or 48K)",
             1 => "1 (YM-IOA Banked 128K/256K)",
             2 => "2 (SuperGame Banked 128K/256K/512K)",
             3 => "3 (Activision Banked 128K)",
@@ -594,9 +594,9 @@ impl RomImage {
 
     /// Prepares raw ROM data for cartridge output according to Atari 7800 mapper rules.
     ///
-    /// - **Mapper 0 (Linear 32K)**: Padded or truncated to exactly 32 KB ($8000–$FFFF).
-    ///   Images smaller than 32 KB are placed at the top of the 32 KB buffer with `$FF` filler,
-    ///   ensuring 6502 vectors at `$FFFA..$FFFF` remain aligned.
+    /// - **Mapper 0 (Linear 32K or 48K)**: A 48KB image (`$4000–$FFFF`) is passed through.
+    ///   Images of 32KB or smaller are placed at the top of a 32KB buffer with `$FF` filler,
+    ///   so the 6502 vectors stay at `$FFFA–$FFFF`. Any other size is truncated to its top 32KB.
     /// - **Banked mappers (1–4)**: Validated against standard bank sizes, returning diagnostic notes
     ///   if unexpected sizes are encountered.
     /// - **Custom mappers (>4)**: Passed through untouched with diagnostic notation.
@@ -607,19 +607,22 @@ impl RomImage {
         let mut notes = Vec::new();
         let payload = match mapper {
             0 => {
-                if raw.len() > 32768 {
+                if raw.len() == 48 * 1024 {
+                    raw.to_vec()
+                } else if raw.len() > 32 * 1024 {
                     notes.push(format!(
-                        "Warning: input is {} bytes but mapper is 0 (linear/fixed 32K) — \
-                         only the top 32 KB will be kept. Use --mapper 1..255 for banked images.",
+                        "Warning: input is {} bytes but mapper is 0 (linear 32KB or 48KB) — \
+                         only the top 32 KB will be kept. A flat 48KB image must be exactly 49152 bytes.",
                         raw.len()
                     ));
+                    let src_start = raw.len() - 32768;
+                    raw[src_start..].to_vec()
+                } else {
+                    let mut rom = vec![0xFFu8; 32768];
+                    let dst_start = 32768 - raw.len();
+                    rom[dst_start..].copy_from_slice(raw);
+                    rom
                 }
-                let mut rom = vec![0xFFu8; 32768];
-                let copy_len = raw.len().min(32768);
-                let dst_start = 32768 - copy_len;
-                let src_start = raw.len() - copy_len;
-                rom[dst_start..].copy_from_slice(&raw[src_start..]);
-                rom
             }
             1 => {
                 if raw.len() != 128 * 1024 && raw.len() != 256 * 1024 {
@@ -858,7 +861,7 @@ mod tests {
         };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(u16::from_be_bytes([header[66], header[67]]), 0x0800);
-        assert_ne!(header[54] & 0x04, 0);
+        assert_eq!(header[54] & 0x04, 0);
 
         let cfg = Config {
             audio: 0x0001,
@@ -874,7 +877,7 @@ mod tests {
         };
         let header = build_a78_header(&cfg, 32768).unwrap();
         assert_eq!(u16::from_be_bytes([header[66], header[67]]), 0x0803);
-        assert_ne!(header[54] & 0x04, 0);
+        assert_eq!(header[54] & 0x04, 0);
         assert_ne!(header[54] & 0x08, 0);
     }
 
@@ -1095,10 +1098,18 @@ mod tests {
         assert_eq!(payload, raw_32k);
         assert!(notes.is_empty());
 
-        // Greater than 32 KB: truncated to top 32 KB with warning note
+        // Flat 48KB ($4000–$FFFF) passes through unchanged.
         let mut raw_48k = vec![0x00; 16384];
         raw_48k.extend_from_slice(&vec![0xAA; 32768]);
         let (payload, notes) = RomImage::prepare_mapper_payload(0, &raw_48k);
+        assert_eq!(payload.len(), 49152);
+        assert_eq!(payload, raw_48k);
+        assert!(notes.is_empty());
+
+        // Any other size above 32KB is still truncated to the top 32KB.
+        let mut raw_40k = vec![0x11; 8 * 1024];
+        raw_40k.extend_from_slice(&vec![0xAA; 32768]);
+        let (payload, notes) = RomImage::prepare_mapper_payload(0, &raw_40k);
         assert_eq!(payload.len(), 32768);
         assert_eq!(payload, vec![0xAA; 32768]);
         assert_eq!(notes.len(), 1);

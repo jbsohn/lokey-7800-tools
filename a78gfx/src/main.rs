@@ -1,4 +1,6 @@
-use a78gfx::{AssemblerType, GfxFile, MariaMode, MariaSpriteBank, PaletteFile};
+use a78gfx::{
+    AssemblerType, GfxFile, IndexedGraphic, MariaMode, MariaSpriteBank, PaletteFile, RgbaGraphic,
+};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -29,6 +31,16 @@ impl From<ModeArg> for MariaMode {
             ModeArg::Mode320 => MariaMode::Mode320,
         }
     }
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum ScaleFilter {
+    /// Copy the nearest already-quantized pixel (fast; thin strokes can break up)
+    Nearest,
+    /// Box-filter the master and keep the palette color covering each pixel
+    /// (needs --palette and a PNG). Thin strokes keep partial coverage, and
+    /// neighbouring colors are not blended into a third index.
+    Area,
 }
 
 #[derive(Subcommand, Debug)]
@@ -181,9 +193,29 @@ enum Commands {
         #[arg(long)]
         scales: Option<String>,
 
+        /// One scale frame per scanline, from the full canvas height down to this many
+        /// lines (inclusive). The sprite shrinks by one pixel per frame.
+        /// Mutually exclusive with --scales.
+        #[arg(long, value_name = "MIN_LINES")]
+        scale_lines: Option<usize>,
+
         /// Apply pixel aspect ratio (PAR) correction for 160A rectangular pixels (2:1)
         #[arg(long, default_value_t = true)]
         par: bool,
+
+        /// Directory to dump each baked frame as a PNG for visual inspection (debug)
+        #[arg(long, value_name = "DIR")]
+        dump_frames: Option<PathBuf>,
+
+        /// How --scales frames are resampled
+        #[arg(long, value_enum, default_value_t = ScaleFilter::Nearest)]
+        scale_filter: ScaleFilter,
+
+        /// With --scale-filter area: an output pixel whose ink coverage rounds to less than
+        /// this (0..255) becomes transparent. Lower keeps thin or partly covered strokes;
+        /// higher drops them.
+        #[arg(long, default_value_t = 128, value_name = "0..255")]
+        alpha_threshold: u8,
     },
 }
 
@@ -202,6 +234,40 @@ fn derive_label(input_path: &Path, user_label: Option<String>) -> String {
             .unwrap_or("sprite")
             .to_string()
     }
+}
+
+fn dump_frame(dir: &Path, name: &str, graphic: &IndexedGraphic) {
+    let path = dir.join(format!("{name}.png"));
+    graphic
+        .save_debug_png(&path)
+        .unwrap_or_else(|e| fatal(format!("failed to write '{}': {e}", path.display())));
+    println!("Dumped frame -> '{}'", path.display());
+}
+
+/// One scale factor per scanline, largest first: `height/height`, `(height-1)/height`, ...
+fn scale_line_steps(height: usize, min_lines: usize) -> Vec<(String, f32)> {
+    (min_lines..=height)
+        .rev()
+        .map(|lines| {
+            let factor = lines as f32 / height as f32;
+            (lines.to_string(), factor)
+        })
+        .collect()
+}
+
+fn parse_scale_list(scales_str: &str) -> Vec<(String, f32)> {
+    let mut out = Vec::new();
+    for s_part in scales_str.split(',') {
+        let s_str = s_part.trim();
+        if s_str.is_empty() {
+            continue;
+        }
+        let s_val: f32 = s_str
+            .parse()
+            .unwrap_or_else(|_| fatal(format!("invalid scale value '{s_str}' (expected float)")));
+        out.push((s_str.to_string(), s_val));
+    }
+    out
 }
 
 fn parse_dimensions(s: &str) -> Option<(usize, usize)> {
@@ -433,7 +499,11 @@ fn main() {
             angles,
             resize,
             scales,
+            scale_lines,
             par,
+            dump_frames,
+            scale_filter,
+            alpha_threshold,
         } => {
             let label = derive_label(&input, label);
             let writer = assembler.create_writer();
@@ -484,6 +554,14 @@ fn main() {
                 graphic = graphic.resize(w, h);
             }
 
+            // Compensate for 160A's 2:1 (wide) pixels before deriving any frame, so the
+            // sprite renders square on hardware, matching the `convert --par` path. 320 mode
+            // is unchanged. The area scaler below works in source pixels, so it must also see
+            // the corrected dimensions rather than the raw PNG.
+            if par {
+                graphic = graphic.apply_par_correction(maria_mode);
+            }
+
             let subpalette_u8 = u8::try_from(subpalette & 0x07).unwrap_or(0);
             let base_sprite = graphic
                 .to_maria_sprite(maria_mode)
@@ -491,12 +569,22 @@ fn main() {
 
             let mut bank = MariaSpriteBank::new(maria_mode, base_sprite.height_lines);
 
+            if let Some(ref dir) = dump_frames {
+                std::fs::create_dir_all(dir).unwrap_or_else(|e| {
+                    fatal(format!("failed to create '{}': {e}", dir.display()))
+                });
+                dump_frame(dir, &format!("{label}_source"), &graphic);
+            }
+
             // 3. Add rotation frames
             if angles > 0 {
                 let step_deg = 360.0 / (angles as f32);
                 for i in 0..angles {
                     let deg = (i as f32) * step_deg;
                     let rot = graphic.rotate(deg, par);
+                    if let Some(ref dir) = dump_frames {
+                        dump_frame(dir, &format!("{label}_rot_{i:02}"), &rot);
+                    }
                     let mut rot_sprite = rot
                         .to_maria_sprite(maria_mode)
                         .unwrap_or_else(|e| fatal(format!("rotation error at {deg} deg: {e}")));
@@ -506,17 +594,64 @@ fn main() {
                 }
             }
 
-            // 4. Add scale frames if provided
-            if let Some(scales_str) = scales {
-                for s_part in scales_str.split(',') {
-                    let s_str = s_part.trim();
-                    if s_str.is_empty() {
-                        continue;
-                    }
-                    let s_val: f32 = s_str.parse().unwrap_or_else(|_| {
-                        fatal(format!("invalid scale value '{s_str}' (expected float)"))
+            // 4. Add scale frames if provided. Area filtering samples the original PNG
+            // once, straight onto the (resized, PAR-corrected) canvas. A second resample
+            // of an already-shrunk image is what breaks thin strokes.
+            let scale_specs = if let Some(min_lines) = scale_lines {
+                if scales.is_some() {
+                    fatal("--scale-lines and --scales cannot be used together");
+                }
+                if graphic.height == 0 || min_lines == 0 || min_lines > graphic.height {
+                    fatal(format!(
+                        "--scale-lines {min_lines} is outside 1..={}",
+                        graphic.height
+                    ));
+                }
+                scale_line_steps(graphic.height, min_lines)
+            } else if let Some(ref scales_str) = scales {
+                parse_scale_list(scales_str)
+            } else {
+                Vec::new()
+            };
+
+            if !scale_specs.is_empty() {
+                let area_master = if scale_filter == ScaleFilter::Area {
+                    let pal = loaded_palette
+                        .as_ref()
+                        .unwrap_or_else(|| fatal("--scale-filter area requires --palette"));
+                    let rgba = RgbaGraphic::load_png(&input).unwrap_or_else(|e| {
+                        fatal(format!(
+                            "--scale-filter area needs a PNG input, failed on '{}': {e}",
+                            input.display()
+                        ))
                     });
-                    let scaled = graphic.scale_centered(s_val, s_val);
+                    Some((rgba, pal))
+                } else {
+                    None
+                };
+
+                for (s_str, s_val) in scale_specs {
+                    let scaled = if let Some((ref rgba, pal)) = area_master {
+                        let canvas_w = graphic.width;
+                        let canvas_h = graphic.height;
+                        let fx = f64::from(s_val) * canvas_w as f64 / rgba.width as f64;
+                        let fy = f64::from(s_val) * canvas_h as f64 / rgba.height as f64;
+                        rgba.scale_area_indexed(
+                            canvas_w,
+                            canvas_h,
+                            fx,
+                            fy,
+                            pal,
+                            subpalette,
+                            maria_mode,
+                            alpha_threshold,
+                        )
+                    } else {
+                        graphic.scale_centered(s_val, s_val)
+                    };
+                    if let Some(ref dir) = dump_frames {
+                        dump_frame(dir, &format!("{label}_scale_{s_str}"), &scaled);
+                    }
                     let mut scaled_sprite = scaled
                         .to_maria_sprite(maria_mode)
                         .unwrap_or_else(|e| fatal(format!("scale error at {s_val}: {e}")));
@@ -694,6 +829,22 @@ mod tests {
                     command: Commands::Convert { .. }
                 })
             ));
+        }
+    }
+
+    #[test]
+    fn test_scale_line_steps_are_one_pixel_apart() {
+        let steps = scale_line_steps(48, 8);
+        assert_eq!(steps.len(), 41);
+        assert_eq!(steps.first().map(|(_, f)| *f), Some(1.0));
+        assert_eq!(steps.last().map(|(label, _)| label.as_str()), Some("8"));
+        let heights: Vec<f32> = steps.iter().map(|(_, f)| f * 48.0).collect();
+        for pair in heights.windows(2) {
+            let delta = pair[0] - pair[1];
+            assert!(
+                (delta - 1.0).abs() < 1e-4,
+                "height step {delta} is not one scanline"
+            );
         }
     }
 

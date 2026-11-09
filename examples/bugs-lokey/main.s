@@ -23,7 +23,7 @@
 .segment "LOKEYDLL_GFX2"
 .include "square.inc"
 
-NBUGS     = 60
+NBUGS     = 32
 SPRITE_W  = 8
 SPRITE_H  = 16
 MAX_X     = LOKEYDLL_VIEW_W - SPRITE_W + 1

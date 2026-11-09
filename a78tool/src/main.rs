@@ -67,7 +67,7 @@ struct GenerateArgs {
     #[arg(long)]
     title: Option<String>,
 
-    /// Mapper ID (0=Linear 32K, 1=YM-IOA, 2=SuperGame, 3=Activision, 4=Absolute, 5=RAMBank, 6..255=Custom)
+    /// Mapper ID (0=Linear 32K or 48K, 1=YM-IOA, 2=SuperGame, 3=Activision, 4=Absolute, 5=RAMBank, 6..255=Custom)
     #[arg(long)]
     mapper: Option<u8>,
 

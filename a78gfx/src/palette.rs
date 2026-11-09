@@ -528,6 +528,142 @@ pub struct RgbaGraphic {
     pub pixels: Vec<ColorRgba>,
 }
 
+/// Canvas offset of the source's top-left so the two centers coincide.
+///
+/// Leaving this exact (not rounded to a pixel) is what keeps a symmetric source symmetric.
+/// Snapping the origin walks the sprite by a pixel between nearby scale factors.
+fn centered_origin(src_extent: usize, dst_extent: usize, factor: f64) -> f64 {
+    (dst_extent as f64) * 0.5 - (src_extent as f64) * 0.5 * factor
+}
+
+/// Coverage of one connected source shape inside a single output pixel.
+struct ComponentCoverage {
+    id: u32,
+    colors: [f64; 4],
+}
+
+impl ComponentCoverage {
+    fn ink(&self) -> f64 {
+        self.colors[1] + self.colors[2] + self.colors[3]
+    }
+
+    /// Palette index with the most coverage. Index 0 is never returned.
+    fn color(&self) -> Option<u8> {
+        let mut best_i = 0_usize;
+        let mut best_w = 0.0_f64;
+        for (i, &weight) in self.colors.iter().enumerate().skip(1) {
+            if weight > best_w {
+                best_w = weight;
+                best_i = i;
+            }
+        }
+        if best_i == 0 {
+            None
+        } else {
+            Some(best_i as u8)
+        }
+    }
+}
+
+/// 4-connected labels for non-zero `mask` pixels. Label 0 is background.
+fn component_labels(mask: &[u8], width: usize) -> Vec<u32> {
+    let mut labels = vec![0_u32; mask.len()];
+    if width == 0 {
+        return labels;
+    }
+    let height = mask.len() / width;
+    let mut next_id = 1_u32;
+    let mut stack = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            let start = y * width + x;
+            if mask[start] == 0 || labels[start] != 0 {
+                continue;
+            }
+            let id = next_id;
+            next_id = next_id.saturating_add(1);
+            labels[start] = id;
+            stack.push((x, y));
+            while let Some((cx, cy)) = stack.pop() {
+                let neighbors = [
+                    (cx.wrapping_sub(1), cy, cx > 0),
+                    (cx + 1, cy, cx + 1 < width),
+                    (cx, cy.wrapping_sub(1), cy > 0),
+                    (cx, cy + 1, cy + 1 < height),
+                ];
+                for (nx, ny, inside) in neighbors {
+                    if !inside {
+                        continue;
+                    }
+                    let ni = ny * width + nx;
+                    if mask[ni] != 0 && labels[ni] == 0 {
+                        labels[ni] = id;
+                        stack.push((nx, ny));
+                    }
+                }
+            }
+        }
+    }
+    labels
+}
+
+/// Open a one-pixel slot wherever two different shapes sit on neighbouring pixels.
+///
+/// The slot is made by sliding the left shape left, or the right shape right, into an
+/// empty pixel. If neither side has room, the longer of the two runs gives up its
+/// touching pixel.
+fn open_component_gaps(ids: &mut [u32], colors: &mut [u8]) {
+    let width = ids.len();
+    for _ in 0..width {
+        let mut opened = false;
+        for i in 0..width.saturating_sub(1) {
+            let left = ids[i];
+            let right = ids[i + 1];
+            if left == 0 || right == 0 || left == right {
+                continue;
+            }
+            let mut start = i;
+            while start > 0 && ids[start - 1] == left {
+                start -= 1;
+            }
+            if start > 0 && ids[start - 1] == 0 {
+                ids[start - 1] = left;
+                colors[start - 1] = colors[start];
+                ids[i] = 0;
+                colors[i] = 0;
+                opened = true;
+                break;
+            }
+            let mut end = i + 1;
+            while end + 1 < width && ids[end + 1] == right {
+                end += 1;
+            }
+            if end + 1 < width && ids[end + 1] == 0 {
+                ids[end + 1] = right;
+                colors[end + 1] = colors[end];
+                ids[i + 1] = 0;
+                colors[i + 1] = 0;
+                opened = true;
+                break;
+            }
+            let left_len = i - start + 1;
+            let right_len = end - (i + 1) + 1;
+            if left_len >= right_len {
+                ids[i] = 0;
+                colors[i] = 0;
+            } else {
+                ids[i + 1] = 0;
+                colors[i + 1] = 0;
+            }
+            opened = true;
+            break;
+        }
+        if !opened {
+            break;
+        }
+    }
+}
+
 impl RgbaGraphic {
     /// Creates a new graphic filled with transparent pixels.
     #[must_use]
@@ -547,6 +683,281 @@ impl RgbaGraphic {
         } else {
             ColorRgba::new(0, 0, 0, 0)
         }
+    }
+
+    /// Loads a PNG from disk as unquantized RGBA.
+    ///
+    /// # Errors
+    /// Returns [`GfxError`] if the file cannot be read or decoded.
+    pub fn load_png<P: AsRef<Path>>(path: P) -> Result<Self, GfxError> {
+        let file = File::open(path)?;
+        Self::from_png_reader(BufReader::new(file))
+    }
+
+    /// Resamples into a `new_width` x `new_height` canvas with a premultiplied-alpha box
+    /// (area-weighted) filter, so partly covered pixels keep partial alpha instead of being
+    /// dropped or kept whole.
+    #[must_use]
+    pub fn resize(&self, new_width: usize, new_height: usize) -> Self {
+        if new_width == 0 || new_height == 0 || self.width == 0 || self.height == 0 {
+            return Self::new(new_width, new_height);
+        }
+
+        let factor_x = new_width as f64 / self.width as f64;
+        let factor_y = new_height as f64 / self.height as f64;
+        self.scale_area(new_width, new_height, factor_x, factor_y)
+    }
+
+    /// Applies pixel aspect ratio (PAR) correction for the target hardware graphics mode.
+    ///
+    /// For 160A mode where CRT pixels are 2:1 wide, compresses horizontal resolution by 0.5x
+    /// so a square-pixel source appears square on the CRT. 320 mode is left unchanged.
+    #[must_use]
+    pub fn apply_par_correction(&self, mode: MariaMode) -> Self {
+        match mode {
+            MariaMode::Mode160A => {
+                let new_width = (self.width / 2).max(1);
+                self.resize(new_width, self.height)
+            }
+            MariaMode::Mode320 => self.clone(),
+        }
+    }
+
+    /// Resamples into an `out_width` x `out_height` canvas with a box (area-weighted) filter.
+    ///
+    /// `factor_x` / `factor_y` are output pixels per source pixel. A factor below the
+    /// canvas-to-source ratio shrinks the source around the middle and leaves a transparent
+    /// border; exactly 1.0 pixel covers the whole canvas. Each output pixel averages the
+    /// source area it covers in premultiplied alpha, so partly covered pixels get partial
+    /// alpha instead of being dropped or kept whole (as nearest-neighbour sampling does).
+    /// The source center maps exactly onto the canvas center, so a symmetric source stays
+    /// symmetric and neighbouring scale factors do not jump by a pixel.
+    #[must_use]
+    pub fn scale_area(
+        &self,
+        out_width: usize,
+        out_height: usize,
+        factor_x: f64,
+        factor_y: f64,
+    ) -> Self {
+        let mut out = Self::new(out_width, out_height);
+        if factor_x <= f64::EPSILON
+            || factor_y <= f64::EPSILON
+            || self.width == 0
+            || self.height == 0
+        {
+            return out;
+        }
+
+        let origin_x = centered_origin(self.width, out_width, factor_x);
+        let origin_y = centered_origin(self.height, out_height, factor_y);
+
+        for dy in 0..out_height {
+            let y0 = (dy as f64 - origin_y) / factor_y;
+            let y1 = ((dy + 1) as f64 - origin_y) / factor_y;
+            for dx in 0..out_width {
+                let x0 = (dx as f64 - origin_x) / factor_x;
+                let x1 = ((dx + 1) as f64 - origin_x) / factor_x;
+
+                let footprint = (x1 - x0) * (y1 - y0);
+                let mut sum_a = 0.0_f64;
+                let mut sum_r = 0.0_f64;
+                let mut sum_g = 0.0_f64;
+                let mut sum_b = 0.0_f64;
+
+                let sy_lo = y0.floor().max(0.0) as usize;
+                let sy_hi = (y1.ceil().max(0.0) as usize).min(self.height);
+                let sx_lo = x0.floor().max(0.0) as usize;
+                let sx_hi = (x1.ceil().max(0.0) as usize).min(self.width);
+
+                for sy in sy_lo..sy_hi {
+                    let wy = (y1.min((sy + 1) as f64) - y0.max(sy as f64)).max(0.0);
+                    for sx in sx_lo..sx_hi {
+                        let wx = (x1.min((sx + 1) as f64) - x0.max(sx as f64)).max(0.0);
+                        let p = self.pixels[sy * self.width + sx];
+                        let wa = wx * wy * f64::from(p.a);
+                        sum_a += wa;
+                        sum_r += wa * f64::from(p.r);
+                        sum_g += wa * f64::from(p.g);
+                        sum_b += wa * f64::from(p.b);
+                    }
+                }
+
+                if sum_a > 0.0 && footprint > 0.0 {
+                    let to_u8 = |v: f64| v.round().clamp(0.0, 255.0) as u8;
+                    out.pixels[dy * out_width + dx] = ColorRgba::new(
+                        to_u8(sum_r / sum_a),
+                        to_u8(sum_g / sum_a),
+                        to_u8(sum_b / sum_a),
+                        to_u8(sum_a / footprint),
+                    );
+                }
+            }
+        }
+
+        out
+    }
+
+    /// Box-filters into an indexed canvas, keeping the palette color that covers the most of
+    /// each output pixel.
+    ///
+    /// Source pixels with alpha below 128 are transparent. An output pixel becomes transparent
+    /// when its ink coverage, on the 0..255 scale, rounds to less than `coverage_threshold`.
+    /// Coverage is measured per connected shape, not summed across shapes: the slot between
+    /// the Fuji's bars is not ink just because both bars spill into it. If two shapes would
+    /// still land on neighbouring pixels, they are shifted apart by one pixel so the slot
+    /// stays open. The winning color is a real palette entry: covered colors are not averaged.
+    /// The same center mapping as [`Self::scale_area`] is used, so a symmetric source stays
+    /// put as the factor changes.
+    #[must_use]
+    pub fn scale_area_indexed(
+        &self,
+        out_width: usize,
+        out_height: usize,
+        factor_x: f64,
+        factor_y: f64,
+        palette: &ProjectPalette,
+        subpalette_slot: usize,
+        mode: MariaMode,
+        coverage_threshold: u8,
+    ) -> IndexedGraphic {
+        let mut out = IndexedGraphic::new(out_width, out_height);
+        if factor_x <= f64::EPSILON
+            || factor_y <= f64::EPSILON
+            || self.width == 0
+            || self.height == 0
+            || out_width == 0
+            || out_height == 0
+        {
+            return out;
+        }
+
+        let src_index = self.classify_for_scale(palette, subpalette_slot, mode);
+        let components = component_labels(&src_index, self.width);
+        let origin_x = centered_origin(self.width, out_width, factor_x);
+        let origin_y = centered_origin(self.height, out_height, factor_y);
+        let color_slots = match mode {
+            MariaMode::Mode160A => 3,
+            MariaMode::Mode320 => 1,
+        };
+
+        let mut row_ids = vec![0_u32; out_width];
+        let mut row_colors = vec![0_u8; out_width];
+        for dy in 0..out_height {
+            let y0 = (dy as f64 - origin_y) / factor_y;
+            let y1 = ((dy + 1) as f64 - origin_y) / factor_y;
+            let sy_lo = y0.floor().max(0.0) as usize;
+            let sy_hi = (y1.ceil().max(0.0) as usize).min(self.height);
+            row_ids.fill(0);
+            row_colors.fill(0);
+            for dx in 0..out_width {
+                let x0 = (dx as f64 - origin_x) / factor_x;
+                let x1 = ((dx + 1) as f64 - origin_x) / factor_x;
+                let footprint = (x1 - x0) * (y1 - y0);
+                if footprint <= 0.0 {
+                    continue;
+                }
+
+                let sx_lo = x0.floor().max(0.0) as usize;
+                let sx_hi = (x1.ceil().max(0.0) as usize).min(self.width);
+                let mut parts: Vec<ComponentCoverage> = Vec::new();
+                for sy in sy_lo..sy_hi {
+                    let wy = (y1.min((sy + 1) as f64) - y0.max(sy as f64)).max(0.0);
+                    if wy <= 0.0 {
+                        continue;
+                    }
+                    for sx in sx_lo..sx_hi {
+                        let wx = (x1.min((sx + 1) as f64) - x0.max(sx as f64)).max(0.0);
+                        if wx <= 0.0 {
+                            continue;
+                        }
+                        let i = sy * self.width + sx;
+                        let idx = usize::from(src_index[i]);
+                        if idx == 0 || idx > color_slots {
+                            continue;
+                        }
+                        let weight = wx * wy * f64::from(self.pixels[i].a);
+                        let comp = components[i];
+                        if let Some(part) = parts.iter_mut().find(|part| part.id == comp) {
+                            part.colors[idx] += weight;
+                        } else {
+                            let mut colors = [0.0; 4];
+                            colors[idx] += weight;
+                            parts.push(ComponentCoverage { id: comp, colors });
+                        }
+                    }
+                }
+
+                let Some(best) = parts.iter().max_by(|a, b| {
+                    a.ink()
+                        .partial_cmp(&b.ink())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                }) else {
+                    continue;
+                };
+                let coverage = best.ink() / footprint;
+                if coverage.round() < f64::from(coverage_threshold) {
+                    continue;
+                }
+                if let Some(color) = best.color() {
+                    row_ids[dx] = best.id;
+                    row_colors[dx] = color;
+                }
+            }
+            open_component_gaps(&mut row_ids, &mut row_colors);
+            let dst = dy * out_width;
+            out.pixels[dst..dst + out_width].copy_from_slice(&row_colors);
+        }
+
+        out
+    }
+
+    /// Palette index per source pixel, using the same matte rules as [`Self::to_indexed`].
+    /// Index 0 is transparent. Opaque pixels map to 1..=3 in 160A and to 1 in 320 when the
+    /// source has any transparent pixel.
+    fn classify_for_scale(
+        &self,
+        palette: &ProjectPalette,
+        subpalette_slot: usize,
+        mode: MariaMode,
+    ) -> Vec<u8> {
+        const MATTE: u8 = 128;
+        let subpal = palette.get_subpalette(subpalette_slot);
+        let has_alpha = self.pixels.iter().any(|p| p.a < MATTE);
+        let mut src_index = Vec::with_capacity(self.pixels.len());
+
+        match mode {
+            MariaMode::Mode160A => {
+                let visible = [subpal[1], subpal[2], subpal[3]];
+                let all = [subpal[0], subpal[1], subpal[2], subpal[3]];
+                for p in &self.pixels {
+                    if p.a < MATTE {
+                        src_index.push(0);
+                    } else if has_alpha {
+                        let best = p.to_rgb().nearest_index(&visible);
+                        src_index.push((best as u8) + 1);
+                    } else {
+                        let best = p.to_rgb().nearest_index(&all);
+                        src_index.push(best as u8);
+                    }
+                }
+            }
+            MariaMode::Mode320 => {
+                let pair = [subpal[0], subpal[1]];
+                for p in &self.pixels {
+                    if p.a < MATTE {
+                        src_index.push(0);
+                    } else if has_alpha {
+                        src_index.push(1);
+                    } else {
+                        let best = p.to_rgb().nearest_index(&pair);
+                        src_index.push(best as u8);
+                    }
+                }
+            }
+        }
+
+        src_index
     }
 
     /// Decodes an image from any reader implementing [`BufRead`] + [`std::io::Seek`] into an `RgbaGraphic`.
@@ -703,8 +1114,22 @@ impl RgbaGraphic {
         subpalette_slot: usize,
         mode: MariaMode,
     ) -> IndexedGraphic {
+        self.to_indexed_with_threshold(palette, subpalette_slot, mode, 128)
+    }
+
+    /// Same as [`Self::to_indexed`], but pixels with `a < alpha_threshold` become transparent
+    /// (index 0). Lower thresholds keep thin or partially covered strokes (for example in
+    /// area-scaled frames); higher thresholds drop them.
+    #[must_use]
+    pub fn to_indexed_with_threshold(
+        &self,
+        palette: &ProjectPalette,
+        subpalette_slot: usize,
+        mode: MariaMode,
+        alpha_threshold: u8,
+    ) -> IndexedGraphic {
         let subpal = palette.get_subpalette(subpalette_slot);
-        let has_alpha = self.pixels.iter().any(|p| p.a < 128);
+        let has_alpha = self.pixels.iter().any(|p| p.a < alpha_threshold);
 
         let mut indexed_px = Vec::with_capacity(self.width * self.height);
 
@@ -714,7 +1139,7 @@ impl RgbaGraphic {
                 let all = [subpal[0], subpal[1], subpal[2], subpal[3]];
 
                 for p in &self.pixels {
-                    if p.a < 128 {
+                    if p.a < alpha_threshold {
                         indexed_px.push(0);
                     } else if has_alpha {
                         let best = p.to_rgb().nearest_index(&visible);
@@ -729,7 +1154,7 @@ impl RgbaGraphic {
                 let pair = [subpal[0], subpal[1]];
 
                 for p in &self.pixels {
-                    if p.a < 128 {
+                    if p.a < alpha_threshold {
                         indexed_px.push(0);
                     } else if has_alpha {
                         indexed_px.push(1);
@@ -1179,6 +1604,210 @@ mod tests {
         assert!(equates.contains("hero_pal2_c1 ="));
         assert!(equates.contains("hero_pal2_c2 ="));
         assert!(equates.contains("hero_pal2_c3 ="));
+    }
+
+    fn rgba_solid(width: usize, height: usize, px: ColorRgba) -> RgbaGraphic {
+        let mut g = RgbaGraphic::new(width, height);
+        g.pixels.fill(px);
+        g
+    }
+
+    #[test]
+    fn test_scale_area_identity() {
+        let mut src = RgbaGraphic::new(4, 4);
+        src.pixels[5] = ColorRgba::new(255, 0, 0, 255);
+        src.pixels[10] = ColorRgba::new(0, 255, 0, 128);
+        let out = src.scale_area(4, 4, 1.0, 1.0);
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn test_scale_area_partial_coverage_gives_partial_alpha() {
+        // One opaque red pixel beside one transparent pixel, squeezed into one pixel.
+        let mut src = RgbaGraphic::new(2, 1);
+        src.pixels[0] = ColorRgba::new(255, 0, 0, 255);
+        let out = src.scale_area(1, 1, 0.5, 1.0);
+        let p = out.pixels[0];
+        assert_eq!(
+            (p.r, p.g, p.b),
+            (255, 0, 0),
+            "color must not be dimmed by transparent area"
+        );
+        assert!((127..=128).contains(&p.a), "alpha was {}", p.a);
+    }
+
+    #[test]
+    fn test_scale_area_shrinks_around_center() {
+        let src = rgba_solid(4, 4, ColorRgba::new(255, 0, 0, 255));
+        let out = src.scale_area(4, 4, 0.5, 0.5);
+        for y in 0..4 {
+            for x in 0..4 {
+                let inside = (1..3).contains(&x) && (1..3).contains(&y);
+                let a = out.get_pixel(x, y).a;
+                assert_eq!(a, if inside { 255 } else { 0 }, "pixel ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn test_scale_area_to_smaller_canvas() {
+        // A 128-wide source baked onto a 64-wide canvas at full size (factor 0.5).
+        let src = rgba_solid(128, 128, ColorRgba::new(255, 0, 0, 255));
+        let out = src.scale_area(64, 64, 0.5, 0.5);
+        assert!(out.pixels.iter().all(|p| p.a == 255));
+    }
+
+    #[test]
+    fn test_rgba_apply_par_correction() {
+        let src = rgba_solid(16, 8, ColorRgba::new(255, 0, 0, 255));
+        let corrected = src.apply_par_correction(MariaMode::Mode160A);
+        assert_eq!((corrected.width, corrected.height), (8, 8));
+        assert!(corrected.pixels.iter().all(|p| p.a == 255));
+
+        let unchanged = src.apply_par_correction(MariaMode::Mode320);
+        assert_eq!((unchanged.width, unchanged.height), (16, 8));
+    }
+
+    #[test]
+    fn test_to_indexed_alpha_threshold() {
+        let pal = ProjectPalette::new(
+            "T",
+            vec![
+                ColorEntry {
+                    rgb: ColorRgb::new(0, 0, 0),
+                    name: "bg".into(),
+                },
+                ColorEntry {
+                    rgb: ColorRgb::new(255, 0, 0),
+                    name: "red".into(),
+                },
+            ],
+        );
+        let mut src = RgbaGraphic::new(2, 1);
+        src.pixels[0] = ColorRgba::new(255, 0, 0, 100);
+        src.pixels[1] = ColorRgba::new(255, 0, 0, 255);
+
+        let strict = src.to_indexed_with_threshold(&pal, 0, MariaMode::Mode160A, 128);
+        assert_eq!(strict.pixels, vec![0, 1]);
+        let lenient = src.to_indexed_with_threshold(&pal, 0, MariaMode::Mode160A, 64);
+        assert_eq!(lenient.pixels, vec![1, 1]);
+        assert_eq!(src.to_indexed(&pal, 0, MariaMode::Mode160A), strict);
+    }
+
+    #[test]
+    fn test_scale_area_keeps_a_symmetric_source_symmetric() {
+        // Diamond centered on an even canvas. Factor 0.7 does not land on a whole-pixel origin,
+        // which is the case that shifts if the origin is rounded.
+        let mut src = RgbaGraphic::new(16, 16);
+        for y in 0..16 {
+            for x in 0..16 {
+                let dx = (x as i32 * 2 - 15).unsigned_abs();
+                let dy = (y as i32 * 2 - 15).unsigned_abs();
+                if dx + dy <= 14 {
+                    src.pixels[y * 16 + x] = ColorRgba::new(255, 0, 0, 255);
+                }
+            }
+        }
+        let out = src.scale_area(16, 16, 0.7, 0.7);
+        for y in 0..16 {
+            for x in 0..16 {
+                assert_eq!(
+                    out.get_pixel(x, y),
+                    out.get_pixel(15 - x, y),
+                    "horizontal mirror ({x},{y})"
+                );
+                assert_eq!(
+                    out.get_pixel(x, y),
+                    out.get_pixel(x, 15 - y),
+                    "vertical mirror ({x},{y})"
+                );
+            }
+        }
+    }
+
+    fn demo_palette() -> ProjectPalette {
+        ProjectPalette::new(
+            "T",
+            vec![
+                ColorEntry {
+                    rgb: ColorRgb::new(0, 0, 0),
+                    name: "bg".into(),
+                },
+                ColorEntry {
+                    rgb: ColorRgb::new(128, 0, 128),
+                    name: "purple".into(),
+                },
+                ColorEntry {
+                    rgb: ColorRgb::new(255, 0, 0),
+                    name: "red".into(),
+                },
+                ColorEntry {
+                    rgb: ColorRgb::new(0, 0, 255),
+                    name: "blue".into(),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn test_scale_area_indexed_picks_majority_not_blend() {
+        let pal = demo_palette();
+        let mut src = RgbaGraphic::new(4, 1);
+        let red = ColorRgba::new(255, 0, 0, 255);
+        src.pixels[..3].fill(red);
+        src.pixels[3] = ColorRgba::new(0, 0, 255, 255);
+        let out = src.scale_area_indexed(1, 1, 0.25, 1.0, &pal, 0, MariaMode::Mode160A, 128);
+        assert_eq!(out.pixels, vec![2], "three red pixels must beat one blue");
+
+        // Equal red and blue would average to purple. Majority must not invent that color.
+        let mut split = RgbaGraphic::new(2, 1);
+        split.pixels[0] = red;
+        split.pixels[1] = ColorRgba::new(0, 0, 255, 255);
+        let tied = split.scale_area_indexed(1, 1, 0.5, 1.0, &pal, 0, MariaMode::Mode160A, 128);
+        assert_eq!(tied.pixels, vec![2]);
+    }
+
+    #[test]
+    fn test_scale_area_indexed_keeps_half_covered_column() {
+        let pal = demo_palette();
+        let mut src = RgbaGraphic::new(8, 8);
+        for y in 0..8 {
+            src.pixels[y * 8 + 2] = ColorRgba::new(255, 0, 0, 255);
+        }
+        let out = src.scale_area_indexed(8, 8, 0.5, 0.5, &pal, 0, MariaMode::Mode160A, 128);
+        assert!(
+            out.pixels.contains(&2),
+            "a one-pixel stroke at half coverage must survive"
+        );
+    }
+
+    #[test]
+    fn test_scale_area_indexed_keeps_gap_between_separate_bars() {
+        let pal = demo_palette();
+        let mut src = RgbaGraphic::new(8, 4);
+        let red = ColorRgba::new(255, 0, 0, 255);
+        for y in 0..4 {
+            // Columns 2-3 and 5-6 are two bars. Column 4 is the slot between them.
+            src.pixels[y * 8 + 2] = red;
+            src.pixels[y * 8 + 3] = red;
+            src.pixels[y * 8 + 5] = red;
+            src.pixels[y * 8 + 6] = red;
+        }
+        // Half scale maps each bar pair onto its own output pixel, and those pixels touch.
+        let out = src.scale_area_indexed(4, 4, 0.5, 1.0, &pal, 0, MariaMode::Mode160A, 128);
+        for y in 0..4 {
+            let row = &out.pixels[y * 4..(y + 1) * 4];
+            let ink: Vec<usize> = row
+                .iter()
+                .enumerate()
+                .filter(|(_, pixel)| **pixel != 0)
+                .map(|(x, _)| x)
+                .collect();
+            assert!(
+                ink.windows(2).any(|pair| pair[1] > pair[0] + 1),
+                "row {y} joined the bars: {row:?}"
+            );
+        }
     }
 
     #[test]

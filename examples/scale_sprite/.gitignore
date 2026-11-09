@@ -1,0 +1,16 @@
+# Build artifacts (generated in this directory)
+*.o
+*.bin
+*.rom
+*.a78
+
+# Emulator runtime cache / state
+.test7800/
+cfg/
+
+# Generated graphics files (produced by a78gfx bake from assets/)
+logo_bank.inc
+ship_bank.inc
+
+# Debug frame dumps (make frames)
+frames/

@@ -60,7 +60,7 @@ The `.a78` header consists of a fixed 128-byte binary structure prepended to the
 | **17–48** | 32 | `CartName` | Null-padded game title string. |
 | **49–52** | 4 | `RomSize` | 32-bit unsigned integer (big-endian), size of ROM binary in bytes. |
 | **53** | 1 | `CartTypeHi` | Cartridge type high byte (mapper ID high / legacy flags). |
-| **54** | 1 | `CartTypeLo` | Cartridge type low byte (Bit 0: POKEY at $4000, Bit 1: SuperGame RAM, Bit 2: YM2149). |
+| **54** | 1 | `CartTypeLo` | Cartridge type low byte (Bit 0: POKEY at $4000, Bit 1: SuperGame bankswitch, Bit 2: SuperGame RAM at $4000). YM2149 is not a cart-type bit; it is the audio word at offsets 66–67. |
 | **55** | 1 | `Controller1` | Primary controller type (Joystick, Lightgun, Paddle, etc.). |
 | **56** | 1 | `Controller2` | Secondary controller type. |
 | **57** | 1 | `TvType` | TV standard (`0` = NTSC, `1` = PAL). |
@@ -73,6 +73,6 @@ The `.a78` header consists of a fixed 128-byte binary structure prepended to the
 ## 4. Integration in 7800 Hardware & Toolchains
 
 When developing for expansion hardware like the **Lokey 7800 YM** cartridge:
-- Set **Mapper** to `0` for linear 32KB ROMs.
+- Set **Mapper** to `0` for a linear ROM. 32KB and smaller images are stored as 32KB (`$8000–$FFFF`). An image of exactly 48KB is stored whole (`$4000–$FFFF`).
 - Set **Mapper** to `1` for 32-pin banked ROMs (switched via YM2149 IOA port).
 - Set **YM2149 Present** flag (`--ym2149` or `--audio 0x0800`) to signal hardware detection to emulators such as `a7800` and `js7800`.

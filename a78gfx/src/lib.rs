@@ -246,6 +246,41 @@ impl IndexedGraphic {
         })
     }
 
+    /// Write the graphic to a PNG for visual inspection, using a fixed debug
+    /// palette (index 0 = transparent, 1 = red, 2 = green, 3 = blue). Intended
+    /// for inspecting baked frames (rotations/scales) via `a78gfx bake --dump-frames`.
+    ///
+    /// # Errors
+    /// Returns [`GfxError`] if the file cannot be created or the PNG cannot be encoded.
+    pub fn save_debug_png<P: AsRef<Path>>(&self, path: P) -> Result<(), GfxError> {
+        const INDEX_COLORS: [[u8; 4]; 4] = [
+            [0, 0, 0, 0],     // 0 = transparent
+            [255, 0, 0, 255], // 1 = red
+            [0, 255, 0, 255], // 2 = green
+            [0, 0, 255, 255], // 3 = blue
+        ];
+        let width = u32::try_from(self.width)
+            .map_err(|_| GfxError::InvalidDimensions("width exceeds u32".into()))?;
+        let height = u32::try_from(self.height)
+            .map_err(|_| GfxError::InvalidDimensions("height exceeds u32".into()))?;
+        let file = File::create(path)?;
+        let buffered = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(buffered, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| GfxError::Conversion(format!("PNG encode error: {e}")))?;
+        let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
+        for &p in &self.pixels {
+            rgba.extend_from_slice(&INDEX_COLORS[usize::from(p & 0x03)]);
+        }
+        writer
+            .write_image_data(&rgba)
+            .map_err(|e| GfxError::Conversion(format!("PNG write error: {e}")))?;
+        Ok(())
+    }
+
     /// Read pixel at coordinate `(x, y)`. Returns 0 if out of bounds or negative.
     #[must_use]
     pub fn get_pixel(&self, x: i64, y: i64) -> u8 {
@@ -961,6 +996,70 @@ mod tests {
         assert_eq!(strided.len(), 512); // 2 lines * 256
         assert_eq!(strided[0], 0x6C);
         assert_eq!(strided[256], 0x20);
+    }
+
+    #[test]
+    fn test_area_scaling_keeps_thin_line_that_nearest_drops() {
+        let (size, line_x) = (8_usize, 2_i64);
+
+        let mut indexed = IndexedGraphic::new(size, size);
+        let mut rgba = RgbaGraphic::new(size, size);
+        for y in 0..size {
+            indexed.set_pixel(line_x, y as i64, 1);
+            rgba.pixels[y * size + line_x as usize] = ColorRgba::new(255, 0, 0, 255);
+        }
+
+        let nearest = indexed.scale_centered(0.5, 0.5);
+        assert!(
+            nearest.pixels.iter().all(|&p| p == 0),
+            "nearest sampling never lands on column {line_x}"
+        );
+
+        let pal = ProjectPalette::new(
+            "T",
+            vec![
+                ColorEntry {
+                    rgb: ColorRgb::new(0, 0, 0),
+                    name: "bg".into(),
+                },
+                ColorEntry {
+                    rgb: ColorRgb::new(255, 0, 0),
+                    name: "red".into(),
+                },
+            ],
+        );
+        let area = rgba
+            .scale_area(size, size, 0.5, 0.5)
+            .to_indexed_with_threshold(&pal, 0, MariaMode::Mode160A, 128);
+        assert!(
+            area.pixels.contains(&1),
+            "area filter must keep the line as partial coverage"
+        );
+    }
+
+    #[test]
+    fn test_save_debug_png_roundtrip() {
+        let mut gfx = IndexedGraphic::new(4, 2);
+        gfx.set_pixel(0, 0, 1);
+        gfx.set_pixel(1, 0, 2);
+        gfx.set_pixel(2, 1, 3);
+
+        let dir = std::env::temp_dir().join("a78gfx_debug_png_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("frame.png");
+        gfx.save_debug_png(&path).unwrap();
+
+        let decoder = png::Decoder::new(BufReader::new(File::open(&path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!((info.width, info.height), (4, 2));
+        assert_eq!(&buf[0..4], &[255, 0, 0, 255]); // index 1 = red
+        assert_eq!(&buf[4..8], &[0, 255, 0, 255]); // index 2 = green
+        assert_eq!(&buf[8..12], &[0, 0, 0, 0]); // index 0 = transparent
+        assert_eq!(&buf[(4 + 2) * 4..(4 + 2) * 4 + 4], &[0, 0, 255, 255]); // index 3 = blue
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
